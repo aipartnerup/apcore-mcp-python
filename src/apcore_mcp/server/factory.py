@@ -75,7 +75,7 @@ class MCPServerFactory:
             description=descriptor.description,
             inputSchema=input_schema,
             annotations=tool_annotations,
-            meta=meta,
+            _meta=meta,
         )
 
     def build_tools(
