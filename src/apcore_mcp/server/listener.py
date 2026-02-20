@@ -8,6 +8,7 @@ from typing import Any
 
 from mcp import types as mcp_types
 
+from apcore_mcp.constants import REGISTRY_EVENTS
 from apcore_mcp.server.factory import MCPServerFactory
 
 logger = logging.getLogger(__name__)
@@ -49,8 +50,8 @@ class RegistryListener:
         if self._active:
             return
         self._active = True
-        self._registry.on("register", self._on_register)
-        self._registry.on("unregister", self._on_unregister)
+        self._registry.on(REGISTRY_EVENTS["REGISTER"], self._on_register)
+        self._registry.on(REGISTRY_EVENTS["UNREGISTER"], self._on_unregister)
 
     def stop(self) -> None:
         """Stop listening for Registry events.

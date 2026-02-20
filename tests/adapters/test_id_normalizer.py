@@ -76,17 +76,32 @@ class TestModuleIDNormalizer:
                 f"normalized to '{normalized}', denormalized to '{denormalized}'"
             )
 
-    def test_normalize_empty_string(self, normalizer: ModuleIDNormalizer) -> None:
-        """Test normalizing an empty string."""
-        result = normalizer.normalize("")
-        assert result == ""
+    def test_normalize_empty_string_raises(self, normalizer: ModuleIDNormalizer) -> None:
+        """Test normalizing an empty string raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid module ID"):
+            normalizer.normalize("")
+
+    def test_normalize_invalid_ids_raise(self, normalizer: ModuleIDNormalizer) -> None:
+        """Test that invalid module IDs raise ValueError."""
+        invalid_ids = [
+            "",
+            "ABC.DEF.GHI",
+            "lower.UPPER.MiXeD",
+            "123starts_with_digit",
+            ".leading.dot",
+            "trailing.dot.",
+            "has spaces",
+            "has-dashes",
+        ]
+        for module_id in invalid_ids:
+            with pytest.raises(ValueError, match="Invalid module ID"):
+                normalizer.normalize(module_id)
 
     def test_normalize_result_matches_pattern(self, normalizer: ModuleIDNormalizer) -> None:
         """Test that all normalized results match the OpenAI function name pattern."""
         pattern = re.compile(r"^[a-zA-Z0-9_-]*$")
 
         test_ids = [
-            "",
             "ping",
             "image.resize",
             "comfyui.image.resize.v2",
@@ -94,8 +109,6 @@ class TestModuleIDNormalizer:
             "my_module.sub_module",
             "a.b.c.d.e.f",
             "test123.module456",
-            "ABC.DEF.GHI",
-            "lower.UPPER.MiXeD",
         ]
 
         for module_id in test_ids:

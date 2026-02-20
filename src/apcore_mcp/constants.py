@@ -1,0 +1,24 @@
+"""APCore MCP bridge constants."""
+
+from __future__ import annotations
+
+import re
+
+REGISTRY_EVENTS: dict[str, str] = {
+    "REGISTER": "register",
+    "UNREGISTER": "unregister",
+}
+
+ErrorCodes: dict[str, str] = {
+    "MODULE_NOT_FOUND": "MODULE_NOT_FOUND",
+    "SCHEMA_VALIDATION_ERROR": "SCHEMA_VALIDATION_ERROR",
+    "ACL_DENIED": "ACL_DENIED",
+    "CALL_DEPTH_EXCEEDED": "CALL_DEPTH_EXCEEDED",
+    "CIRCULAR_CALL": "CIRCULAR_CALL",
+    "CALL_FREQUENCY_EXCEEDED": "CALL_FREQUENCY_EXCEEDED",
+    "INTERNAL_ERROR": "INTERNAL_ERROR",
+    "MODULE_TIMEOUT": "MODULE_TIMEOUT",
+    "MODULE_LOAD_ERROR": "MODULE_LOAD_ERROR",
+}
+
+MODULE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$")

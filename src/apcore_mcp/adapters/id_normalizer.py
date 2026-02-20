@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from apcore_mcp.constants import MODULE_ID_PATTERN
+
 
 class ModuleIDNormalizer:
     """Convert between apcore module IDs and OpenAI-compatible function names.
@@ -37,7 +39,14 @@ class ModuleIDNormalizer:
             'comfyui-image-resize-v2'
             >>> normalizer.normalize("ping")
             'ping'
+        Raises:
+            ValueError: If the module_id does not match the required pattern.
         """
+        if not MODULE_ID_PATTERN.match(module_id):
+            raise ValueError(
+                f"Invalid module ID '{module_id}': must match pattern "
+                f"^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            )
         return module_id.replace(".", "-")
 
     def denormalize(self, tool_name: str) -> str:
