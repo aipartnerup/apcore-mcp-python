@@ -65,10 +65,17 @@ class MCPServerFactory:
             title=annotations_dict.get("title"),
         )
 
-        # Build optional _meta with requires_approval hint
+        # Build optional _meta with requires_approval and streaming hints
         meta: dict[str, object] | None = None
         if self._annotation_mapper.has_requires_approval(descriptor.annotations):
             meta = {"requires_approval": True}
+        if (
+            descriptor.annotations is not None
+            and getattr(descriptor.annotations, "streaming", False)
+        ):
+            if meta is None:
+                meta = {}
+            meta["streaming"] = True
 
         return mcp_types.Tool(
             name=descriptor.module_id,
@@ -121,10 +128,15 @@ class MCPServerFactory:
     ) -> None:
         """Register list_tools and call_tool handlers on the Server.
 
+        The call_tool handler extracts the progress token from the MCP
+        request context (if present) and passes it to the router via
+        the ``extra`` dict so that the router can stream chunks as
+        ``notifications/progress`` messages.
+
         Args:
             server: The MCP Server to register handlers on.
             tools: List of Tool objects to expose via list_tools.
-            router: A router with an async handle_call(name, arguments)
+            router: A router with an async handle_call(name, arguments, extra)
                     method that returns (content_list, is_error).
         """
 
@@ -134,7 +146,27 @@ class MCPServerFactory:
 
         @server.call_tool()
         async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
-            content, is_error = await router.handle_call(name, arguments or {})
+            from mcp.server.lowlevel.server import request_ctx
+
+            ctx = request_ctx.get()
+            progress_token = ctx.meta.progressToken if ctx.meta else None
+            extra: dict[str, Any] | None = None
+
+            if progress_token is not None:
+                async def send_notification(notification: dict[str, Any]) -> None:
+                    await ctx.session.send_progress_notification(
+                        progress_token=notification["params"]["progressToken"],
+                        progress=notification["params"]["progress"],
+                        total=notification["params"].get("total"),
+                        message=notification["params"].get("message"),
+                    )
+
+                extra = {
+                    "send_notification": send_notification,
+                    "progress_token": progress_token,
+                }
+
+            content, is_error = await router.handle_call(name, arguments or {}, extra=extra)
             if is_error:
                 raise Exception(content[0]["text"])
             return content
