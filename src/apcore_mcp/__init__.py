@@ -4,16 +4,44 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Callable
 
+from apcore_mcp.adapters.annotations import AnnotationMapper
+from apcore_mcp.adapters.errors import ErrorMapper
+from apcore_mcp.adapters.id_normalizer import ModuleIDNormalizer
+from apcore_mcp.adapters.schema import SchemaConverter
+from apcore_mcp.constants import REGISTRY_EVENTS, ErrorCodes, MODULE_ID_PATTERN
 from apcore_mcp.converters.openai import OpenAIConverter
 from apcore_mcp.server.factory import MCPServerFactory
+from apcore_mcp.server.listener import RegistryListener
 from apcore_mcp.server.router import ExecutionRouter
+from apcore_mcp.server.server import MCPServer
 from apcore_mcp.server.transport import TransportManager
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
-__all__ = ["serve", "to_openai_tools"]
+__all__ = [
+    # Public API
+    "serve",
+    "to_openai_tools",
+    # Server building blocks
+    "MCPServer",
+    "MCPServerFactory",
+    "ExecutionRouter",
+    "RegistryListener",
+    "TransportManager",
+    # Adapters
+    "AnnotationMapper",
+    "SchemaConverter",
+    "ErrorMapper",
+    "ModuleIDNormalizer",
+    # Converters
+    "OpenAIConverter",
+    # Constants
+    "REGISTRY_EVENTS",
+    "ErrorCodes",
+    "MODULE_ID_PATTERN",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +74,10 @@ def serve(
     port: int = 8000,
     name: str = "apcore-mcp",
     version: str | None = None,
+    on_startup: Callable[[], None] | None = None,
+    on_shutdown: Callable[[], None] | None = None,
+    dynamic: bool = False,
+    validate_inputs: bool = False,
 ) -> None:
     """Launch an MCP Server that exposes all apcore modules as tools.
 
@@ -56,6 +88,10 @@ def serve(
         port: Port number for HTTP-based transports.
         name: MCP server name.
         version: MCP server version. Defaults to apcore-mcp version.
+        on_startup: Optional callback invoked after setup, before transport starts.
+        on_shutdown: Optional callback invoked after the transport completes.
+        dynamic: Reserved for future dynamic tool registration support.
+        validate_inputs: Reserved for future input validation support.
     """
     version = version or __version__
 
@@ -91,7 +127,14 @@ def serve(
         else:
             raise ValueError(f"Unknown transport: {transport!r}. " "Expected 'stdio', 'streamable-http', or 'sse'.")
 
-    asyncio.run(_run())
+    if on_startup is not None:
+        on_startup()
+
+    try:
+        asyncio.run(_run())
+    finally:
+        if on_shutdown is not None:
+            on_shutdown()
 
 
 def to_openai_tools(

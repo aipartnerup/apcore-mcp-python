@@ -65,11 +65,17 @@ class MCPServerFactory:
             title=annotations_dict.get("title"),
         )
 
+        # Build optional _meta with requires_approval hint
+        meta: dict[str, object] | None = None
+        if self._annotation_mapper.has_requires_approval(descriptor.annotations):
+            meta = {"requires_approval": True}
+
         return mcp_types.Tool(
             name=descriptor.module_id,
             description=descriptor.description,
             inputSchema=input_schema,
             annotations=tool_annotations,
+            meta=meta,
         )
 
     def build_tools(

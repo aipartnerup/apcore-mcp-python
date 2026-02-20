@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time as _time
 import uuid
 from typing import Any
 
@@ -14,10 +15,21 @@ from mcp.server.sse import SseServerTransport
 from mcp.server.stdio import stdio_server
 from mcp.server.streamable_http import StreamableHTTPServerTransport
 from starlette.applications import Starlette
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 
 logger = logging.getLogger(__name__)
+
+_start_time = _time.monotonic()
+
+
+def _build_health_response(module_count: int = 0) -> dict[str, object]:
+    """Build health check response."""
+    return {
+        "status": "ok",
+        "uptime_seconds": round(_time.monotonic() - _start_time, 1),
+        "module_count": module_count,
+    }
 
 
 class TransportManager:
@@ -49,8 +61,15 @@ class TransportManager:
         )
 
         async with transport.connect() as (read_stream, write_stream):
+
+            async def _health(request: Any) -> JSONResponse:
+                return JSONResponse(_build_health_response())
+
             app = Starlette(
-                routes=[Mount("/mcp", app=transport.handle_request)],
+                routes=[
+                    Route("/health", endpoint=_health, methods=["GET"]),
+                    Mount("/mcp", app=transport.handle_request),
+                ],
             )
 
             config = uvicorn.Config(app, host=host, port=port, log_level="info")
@@ -83,8 +102,12 @@ class TransportManager:
                 await server.run(read_stream, write_stream, init_options)
             return Response()
 
+        async def _health(request: Any) -> JSONResponse:
+            return JSONResponse(_build_health_response())
+
         app = Starlette(
             routes=[
+                Route("/health", endpoint=_health, methods=["GET"]),
                 Route("/sse", endpoint=handle_sse, methods=["GET"]),
                 Mount("/messages/", app=sse_transport.handle_post_message),
             ],
