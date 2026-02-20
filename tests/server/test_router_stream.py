@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from apcore_mcp.helpers import MCP_PROGRESS_KEY
 from apcore_mcp.server.router import ExecutionRouter
 
 
@@ -21,10 +22,15 @@ class StubExecutor:
 
     def __init__(self, results: dict[str, Any] | None = None) -> None:
         self._results: dict[str, Any] = results or {}
-        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.calls: list[tuple[str, dict[str, Any], Any]] = []
 
-    async def call_async(self, module_id: str, inputs: dict[str, Any]) -> Any:
-        self.calls.append((module_id, inputs))
+    async def call_async(
+        self,
+        module_id: str,
+        inputs: dict[str, Any],
+        context: Any = None,
+    ) -> Any:
+        self.calls.append((module_id, inputs, context))
         return self._results.get(module_id, {})
 
 
@@ -33,19 +39,29 @@ class StreamingExecutor:
 
     def __init__(self, chunks: list[dict[str, Any]]) -> None:
         self._chunks = chunks
-        self.call_async_calls: list[tuple[str, dict[str, Any]]] = []
-        self.stream_calls: list[tuple[str, dict[str, Any]]] = []
+        self.call_async_calls: list[tuple[str, dict[str, Any], Any]] = []
+        self.stream_calls: list[tuple[str, dict[str, Any], Any]] = []
 
-    async def call_async(self, module_id: str, inputs: dict[str, Any]) -> Any:
-        self.call_async_calls.append((module_id, inputs))
+    async def call_async(
+        self,
+        module_id: str,
+        inputs: dict[str, Any],
+        context: Any = None,
+    ) -> Any:
+        self.call_async_calls.append((module_id, inputs, context))
         # Merge all chunks as the non-streaming fallback result
         accumulated: dict[str, Any] = {}
         for chunk in self._chunks:
             accumulated = {**accumulated, **chunk}
         return accumulated
 
-    async def stream(self, module_id: str, inputs: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
-        self.stream_calls.append((module_id, inputs))
+    async def stream(
+        self,
+        module_id: str,
+        inputs: dict[str, Any],
+        context: Any = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        self.stream_calls.append((module_id, inputs, context))
         for chunk in self._chunks:
             yield chunk
 
@@ -210,10 +226,12 @@ class TestStreamingPath:
         """If stream() raises, the error is caught and returned as is_error=True."""
 
         class FailingStreamExecutor:
-            async def call_async(self, module_id: str, inputs: dict[str, Any]) -> Any:
+            async def call_async(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> Any:
                 return {}
 
-            async def stream(self, module_id: str, inputs: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+            async def stream(
+                self, module_id: str, inputs: dict[str, Any], context: Any = None
+            ) -> AsyncIterator[dict[str, Any]]:
                 yield {"partial": "data"}
                 raise RuntimeError("Stream exploded")
 
@@ -254,3 +272,25 @@ class TestStreamingPath:
         assert isinstance(params["progress"], (int, float))
         assert "total" in params
         assert "message" in params
+
+    # ── New tests for context passing ────────────────────────────────────
+
+    async def test_context_passed_to_stream(self) -> None:
+        """Context with _mcp_progress is passed to executor.stream() as 3rd arg."""
+        chunks = [{"done": True}]
+        executor = StreamingExecutor(chunks)
+        router = ExecutionRouter(executor)
+
+        send_notification = AsyncMock()
+        extra: dict[str, Any] = {
+            "progress_token": "tok-ctx",
+            "send_notification": send_notification,
+        }
+
+        await router.handle_call("my.tool", {}, extra=extra)
+
+        assert len(executor.stream_calls) == 1
+        _, _, context = executor.stream_calls[0]
+        assert context is not None
+        assert MCP_PROGRESS_KEY in context.data
+        assert callable(context.data[MCP_PROGRESS_KEY])

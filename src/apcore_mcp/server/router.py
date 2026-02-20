@@ -7,7 +7,10 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
 
+from apcore import Context
+
 from apcore_mcp.adapters.errors import ErrorMapper
+from apcore_mcp.helpers import MCP_ELICIT_KEY, MCP_PROGRESS_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +51,9 @@ class ExecutionRouter:
             tool_name: The MCP tool name (already denormalized to apcore
                 module ID by the caller, or passed through as-is).
             arguments: The tool call arguments dict.
-            extra: Optional dict with ``progress_token`` and
-                ``send_notification`` for streaming support.
+            extra: Optional dict with ``progress_token``,
+                ``send_notification``, and ``session`` for streaming
+                and elicitation support.
 
         Returns:
             A ``(content, is_error)`` tuple where *content* is a list of
@@ -61,9 +65,68 @@ class ExecutionRouter:
         # Extract streaming helpers from extra
         progress_token: str | int | None = None
         send_notification: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None
+        session: Any = None
         if extra is not None:
             progress_token = extra.get("progress_token")
             send_notification = extra.get("send_notification")
+            session = extra.get("session")
+
+        # ── Build context with MCP callbacks ─────────────────────────────
+        context_data: dict[str, Any] = {}
+        has_callbacks = False
+
+        # Inject progress callback if progress_token + send_notification available
+        if progress_token is not None and send_notification is not None:
+            has_callbacks = True
+            _pt = progress_token
+            _sn = send_notification
+
+            async def _progress_callback(
+                progress: float,
+                total: float | None = None,
+                message: str | None = None,
+            ) -> None:
+                notification: dict[str, Any] = {
+                    "method": "notifications/progress",
+                    "params": {
+                        "progressToken": _pt,
+                        "progress": progress,
+                        "total": total if total is not None else 0,
+                    },
+                }
+                if message is not None:
+                    notification["params"]["message"] = message
+                await _sn(notification)
+
+            context_data[MCP_PROGRESS_KEY] = _progress_callback
+
+        # Inject elicitation callback if session available
+        if session is not None:
+            has_callbacks = True
+            _session = session
+
+            async def _elicit_callback(
+                message: str,
+                requested_schema: dict[str, Any] | None = None,
+            ) -> dict[str, Any] | None:
+                try:
+                    result = await _session.elicit_form(
+                        message=message,
+                        requestedSchema=requested_schema or {},
+                    )
+                    return {
+                        "action": result.action,
+                        "content": result.content,
+                    }
+                except Exception:
+                    logger.debug("Elicitation request failed", exc_info=True)
+                    return None
+
+            context_data[MCP_ELICIT_KEY] = _elicit_callback
+
+        context: Context | None = None
+        if has_callbacks:
+            context = Context.create(data=context_data)
 
         # Streaming path: executor has stream() AND we have both helpers
         can_stream = (
@@ -74,20 +137,29 @@ class ExecutionRouter:
 
         if can_stream:
             return await self._handle_stream(
-                tool_name, arguments, progress_token, send_notification  # type: ignore[arg-type]
+                tool_name,
+                arguments,
+                progress_token,  # type: ignore[arg-type]
+                send_notification,  # type: ignore[arg-type]
+                context=context,
             )
 
-        # Non-streaming path (unchanged)
-        return await self._handle_call_async(tool_name, arguments)
+        # Non-streaming path
+        return await self._handle_call_async(tool_name, arguments, context=context)
 
     async def _handle_call_async(
         self,
         tool_name: str,
         arguments: dict[str, Any],
+        context: Any | None = None,
     ) -> tuple[list[dict[str, str]], bool]:
         """Non-streaming execution via executor.call_async()."""
         try:
-            result = await self._executor.call_async(tool_name, arguments)
+            try:
+                result = await self._executor.call_async(tool_name, arguments, context)
+            except TypeError:
+                # Backward compat: executor doesn't accept context arg
+                result = await self._executor.call_async(tool_name, arguments)
             json_output = json.dumps(result, default=str)
             return ([{"type": "text", "text": json_output}], False)
         except Exception as error:
@@ -101,6 +173,7 @@ class ExecutionRouter:
         arguments: dict[str, Any],
         progress_token: str | int,
         send_notification: Callable[[dict[str, Any]], Coroutine[Any, Any, None]],
+        context: Any | None = None,
     ) -> tuple[list[dict[str, str]], bool]:
         """Streaming execution via executor.stream().
 
@@ -112,7 +185,13 @@ class ExecutionRouter:
         chunk_index = 0
 
         try:
-            async for chunk in self._executor.stream(tool_name, arguments):
+            try:
+                stream_iter = self._executor.stream(tool_name, arguments, context)
+            except TypeError:
+                # Backward compat: executor doesn't accept context arg
+                stream_iter = self._executor.stream(tool_name, arguments)
+
+            async for chunk in stream_iter:
                 # Send progress notification for this chunk
                 notification: dict[str, Any] = {
                     "method": "notifications/progress",

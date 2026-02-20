@@ -6,9 +6,11 @@ import asyncio
 import json
 from datetime import datetime
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
+from apcore_mcp.helpers import MCP_ELICIT_KEY, MCP_PROGRESS_KEY
 from apcore_mcp.server.router import ExecutionRouter
 
 # ---------------------------------------------------------------------------
@@ -122,6 +124,32 @@ class StubExecutor:
     ) -> None:
         self._results: dict[str, Any] = results or {}
         self._error = error
+        self.calls: list[tuple[str, dict[str, Any] | None, Any]] = []
+
+    async def call_async(
+        self,
+        module_id: str,
+        inputs: dict[str, Any] | None = None,
+        context: Any = None,
+    ) -> Any:
+        self.calls.append((module_id, inputs, context))
+        if self._error:
+            raise self._error
+        if module_id in self._results:
+            return self._results[module_id]
+        raise ModuleNotFoundStubError(module_id)
+
+
+class LegacyStubExecutor:
+    """Stub executor that does NOT accept a context arg (backward compat)."""
+
+    def __init__(
+        self,
+        results: dict[str, Any] | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self._results: dict[str, Any] = results or {}
+        self._error = error
         self.calls: list[tuple[str, dict[str, Any] | None]] = []
 
     async def call_async(self, module_id: str, inputs: dict[str, Any] | None = None) -> Any:
@@ -197,9 +225,11 @@ class TestExecutionRouter:
         await router.handle_call("image.resize", arguments)
 
         assert len(executor.calls) == 1
-        call_module_id, call_inputs = executor.calls[0]
+        call_module_id, call_inputs, call_context = executor.calls[0]
         assert call_module_id == "image.resize"
         assert call_inputs == arguments
+        # No extra → no context
+        assert call_context is None
 
     async def test_handle_call_empty_arguments(self) -> None:
         """Works correctly with empty dict arguments."""
@@ -213,7 +243,7 @@ class TestExecutionRouter:
         assert parsed["status"] == "ok"
 
         # Verify empty dict was passed through
-        assert executor.calls[0] == ("system.ping", {})
+        assert executor.calls[0][:2] == ("system.ping", {})
 
     async def test_handle_call_module_not_found(self) -> None:
         """MODULE_NOT_FOUND error returns error content with is_error=True."""
@@ -346,3 +376,101 @@ class TestExecutionRouter:
 
         # All three calls should have been recorded
         assert len(executor.calls) == 3
+
+    # ── New tests for context passing ────────────────────────────────────
+
+    async def test_context_has_mcp_progress_when_extra_has_progress(self) -> None:
+        """Context.data has _mcp_progress when extra has progress_token + send_notification."""
+        executor = StubExecutor(results={"test.module": {"ok": True}})
+        router = ExecutionRouter(executor)
+
+        extra: dict[str, Any] = {
+            "progress_token": "tok-1",
+            "send_notification": AsyncMock(),
+            "session": None,
+        }
+
+        await router.handle_call("test.module", {}, extra=extra)
+
+        assert len(executor.calls) == 1
+        _, _, context = executor.calls[0]
+        assert context is not None
+        assert MCP_PROGRESS_KEY in context.data
+        assert callable(context.data[MCP_PROGRESS_KEY])
+
+    async def test_context_has_mcp_elicit_when_extra_has_session(self) -> None:
+        """Context.data has _mcp_elicit when extra has session."""
+        executor = StubExecutor(results={"test.module": {"ok": True}})
+        router = ExecutionRouter(executor)
+
+        mock_session = AsyncMock()
+        extra: dict[str, Any] = {
+            "session": mock_session,
+        }
+
+        await router.handle_call("test.module", {}, extra=extra)
+
+        assert len(executor.calls) == 1
+        _, _, context = executor.calls[0]
+        assert context is not None
+        assert MCP_ELICIT_KEY in context.data
+        assert callable(context.data[MCP_ELICIT_KEY])
+
+    async def test_no_context_when_no_extra_provided(self) -> None:
+        """Context is None when no extra is provided (backward compat)."""
+        executor = StubExecutor(results={"test.module": {"ok": True}})
+        router = ExecutionRouter(executor)
+
+        await router.handle_call("test.module", {})
+
+        assert len(executor.calls) == 1
+        _, _, context = executor.calls[0]
+        assert context is None
+
+    async def test_backward_compat_legacy_executor(self) -> None:
+        """TypeError fallback when executor doesn't accept context arg."""
+        executor = LegacyStubExecutor(results={"test.module": {"ok": True}})
+        router = ExecutionRouter(executor)
+
+        # Provide session so context is built
+        extra: dict[str, Any] = {"session": AsyncMock()}
+
+        content, is_error = await router.handle_call("test.module", {}, extra=extra)
+
+        assert is_error is False
+        parsed = json.loads(content[0]["text"])
+        assert parsed == {"ok": True}
+        # Legacy executor should still have been called
+        assert len(executor.calls) == 1
+
+    async def test_progress_callback_sends_notification(self) -> None:
+        """The injected progress callback sends notifications/progress via send_notification."""
+        received_context: list[Any] = []
+
+        class CapturingExecutor:
+            async def call_async(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> Any:
+                received_context.append(context)
+                # Simulate module calling the progress callback
+                if context and MCP_PROGRESS_KEY in context.data:
+                    await context.data[MCP_PROGRESS_KEY](5, 10, "halfway")
+                return {"done": True}
+
+        executor = CapturingExecutor()
+        router = ExecutionRouter(executor)
+
+        send_notification = AsyncMock()
+        extra: dict[str, Any] = {
+            "progress_token": "tok-progress",
+            "send_notification": send_notification,
+        }
+
+        content, is_error = await router.handle_call("test.module", {}, extra=extra)
+
+        assert is_error is False
+        assert send_notification.call_count == 1
+        notification = send_notification.call_args[0][0]
+        assert notification["method"] == "notifications/progress"
+        assert notification["params"]["progressToken"] == "tok-progress"
+        assert notification["params"]["progress"] == 5
+        assert notification["params"]["total"] == 10
+        assert notification["params"]["message"] == "halfway"

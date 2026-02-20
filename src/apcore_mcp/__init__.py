@@ -12,6 +12,7 @@ from apcore_mcp.adapters.errors import ErrorMapper
 from apcore_mcp.adapters.id_normalizer import ModuleIDNormalizer
 from apcore_mcp.adapters.schema import SchemaConverter
 from apcore_mcp.constants import MODULE_ID_PATTERN, REGISTRY_EVENTS, ErrorCodes
+from apcore_mcp.helpers import MCP_ELICIT_KEY, MCP_PROGRESS_KEY, elicit, report_progress
 from apcore_mcp.converters.openai import OpenAIConverter
 from apcore_mcp.server.factory import MCPServerFactory
 from apcore_mcp.server.listener import RegistryListener
@@ -42,6 +43,11 @@ __all__ = [
     "REGISTRY_EVENTS",
     "ErrorCodes",
     "MODULE_ID_PATTERN",
+    # Extension helpers
+    "report_progress",
+    "elicit",
+    "MCP_PROGRESS_KEY",
+    "MCP_ELICIT_KEY",
 ]
 
 logger = logging.getLogger(__name__)

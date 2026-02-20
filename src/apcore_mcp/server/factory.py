@@ -150,7 +150,9 @@ class MCPServerFactory:
 
             ctx = request_ctx.get()
             progress_token = ctx.meta.progressToken if ctx.meta else None
-            extra: dict[str, Any] | None = None
+
+            # Always pass session for elicitation support
+            extra: dict[str, Any] = {"session": ctx.session}
 
             if progress_token is not None:
                 async def send_notification(notification: dict[str, Any]) -> None:
@@ -161,10 +163,8 @@ class MCPServerFactory:
                         message=notification["params"].get("message"),
                     )
 
-                extra = {
-                    "send_notification": send_notification,
-                    "progress_token": progress_token,
-                }
+                extra["send_notification"] = send_notification
+                extra["progress_token"] = progress_token
 
             content, is_error = await router.handle_call(name, arguments or {}, extra=extra)
             if is_error:
