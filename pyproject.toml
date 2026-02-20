@@ -37,7 +37,7 @@ dev = [
     "pytest-cov>=4.0",
     "mypy>=1.0",
     "ruff>=0.1",
-    "apdev[dev]>=0.1.4",
+    "apdev[dev]>=0.1.6",
 ]
 
 [project.scripts]
