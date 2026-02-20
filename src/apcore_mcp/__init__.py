@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
 
+from apcore_mcp._utils import resolve_executor, resolve_registry
 from apcore_mcp.adapters.annotations import AnnotationMapper
 from apcore_mcp.adapters.errors import ErrorMapper
 from apcore_mcp.adapters.id_normalizer import ModuleIDNormalizer
 from apcore_mcp.adapters.schema import SchemaConverter
-from apcore_mcp.constants import REGISTRY_EVENTS, ErrorCodes, MODULE_ID_PATTERN
+from apcore_mcp.constants import MODULE_ID_PATTERN, REGISTRY_EVENTS, ErrorCodes
 from apcore_mcp.converters.openai import OpenAIConverter
 from apcore_mcp.server.factory import MCPServerFactory
 from apcore_mcp.server.listener import RegistryListener
@@ -45,25 +46,9 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-
-def _resolve_registry(registry_or_executor: Any) -> Any:
-    """Extract Registry from either a Registry or Executor instance."""
-    if hasattr(registry_or_executor, "registry"):
-        # It's an Executor — get its registry
-        return registry_or_executor.registry
-    # Assume it's a Registry
-    return registry_or_executor
-
-
-def _resolve_executor(registry_or_executor: Any) -> Any:
-    """Get or create an Executor from either a Registry or Executor instance."""
-    if hasattr(registry_or_executor, "call_async"):
-        # Already an Executor
-        return registry_or_executor
-    # It's a Registry — create a default Executor
-    from apcore.executor import Executor
-
-    return Executor(registry_or_executor)
+# Re-export for backward compatibility
+_resolve_registry = resolve_registry
+_resolve_executor = resolve_executor
 
 
 def serve(
@@ -95,8 +80,8 @@ def serve(
     """
     version = version or __version__
 
-    registry = _resolve_registry(registry_or_executor)
-    executor = _resolve_executor(registry_or_executor)
+    registry = resolve_registry(registry_or_executor)
+    executor = resolve_executor(registry_or_executor)
 
     # Build MCP server components
     factory = MCPServerFactory()
@@ -158,7 +143,7 @@ def to_openai_tools(
         List of OpenAI tool definition dicts, directly usable with
         openai.chat.completions.create(tools=...).
     """
-    registry = _resolve_registry(registry_or_executor)
+    registry = resolve_registry(registry_or_executor)
     converter = OpenAIConverter()
     tools = converter.convert_registry(
         registry,

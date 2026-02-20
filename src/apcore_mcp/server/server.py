@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -69,13 +68,13 @@ class MCPServer:
 
     def _run(self) -> None:
         """Internal: run the server event loop."""
-        from apcore_mcp import _resolve_registry, _resolve_executor
+        from apcore_mcp._utils import resolve_executor, resolve_registry
         from apcore_mcp.server.factory import MCPServerFactory
         from apcore_mcp.server.router import ExecutionRouter
         from apcore_mcp.server.transport import TransportManager
 
-        registry = _resolve_registry(self._registry_or_executor)
-        executor = _resolve_executor(self._registry_or_executor)
+        registry = resolve_registry(self._registry_or_executor)
+        executor = resolve_executor(self._registry_or_executor)
         version = self._version or "0.2.0"
 
         factory = MCPServerFactory()
@@ -84,7 +83,9 @@ class MCPServer:
         router = ExecutionRouter(executor)
         factory.register_handlers(server, tools, router)
         init_options = factory.build_init_options(
-            server, name=self._name, version=version,
+            server,
+            name=self._name,
+            version=version,
         )
 
         transport_manager = TransportManager()
@@ -101,13 +102,19 @@ class MCPServer:
             elif self._transport == "streamable-http":
                 self._loop.run_until_complete(
                     transport_manager.run_streamable_http(
-                        server, init_options, host=self._host, port=self._port,
+                        server,
+                        init_options,
+                        host=self._host,
+                        port=self._port,
                     ),
                 )
             elif self._transport == "sse":
                 self._loop.run_until_complete(
                     transport_manager.run_sse(
-                        server, init_options, host=self._host, port=self._port,
+                        server,
+                        init_options,
+                        host=self._host,
+                        port=self._port,
                     ),
                 )
             else:
