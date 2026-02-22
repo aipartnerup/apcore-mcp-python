@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import pytest
-from apcore_mcp.server.factory import MCPServerFactory
 from mcp import types as mcp_types
 from mcp.server.lowlevel import Server
 from mcp.server.models import InitializationOptions
 
+from apcore_mcp.server.factory import MCPServerFactory
 from tests.conftest import ModuleDescriptor
 
 # ---------------------------------------------------------------------------

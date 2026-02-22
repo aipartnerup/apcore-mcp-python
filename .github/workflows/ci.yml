@@ -31,21 +31,17 @@ jobs:
         python-version: ${{ matrix.python-version }}
         cache: pip
 
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        # If a constraints.txt file is present, use it to pin critical dependency versions.
-        if [ -f constraints.txt ]; then
-          pip install -e ".[dev]" -c constraints.txt
-        else
-          pip install -e ".[dev]"
-        fi
+        uv sync --extra dev
 
     - name: Lint with Ruff
       run: |
-        ruff format --check src/ tests/
-        ruff check src/ tests/
+        uv run ruff check src/ tests/
 
     - name: Run tests
       run: |
-        pytest
+        uv run pytest

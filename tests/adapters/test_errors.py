@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+
 from apcore_mcp.adapters.errors import ErrorMapper
 
 

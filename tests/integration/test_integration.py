@@ -11,12 +11,12 @@ import json
 from typing import Any
 
 import pytest
+from mcp import types as mcp_types
+
 from apcore_mcp import to_openai_tools
 from apcore_mcp.server.factory import MCPServerFactory
 from apcore_mcp.server.listener import RegistryListener
 from apcore_mcp.server.router import ExecutionRouter
-from mcp import types as mcp_types
-
 from tests.conftest import ModuleAnnotations, ModuleDescriptor
 
 # ---------------------------------------------------------------------------
@@ -389,9 +389,9 @@ class TestOpenAIToolsRoundtrip:
         required_keys = {"name", "description", "parameters"}
         for tool in tools:
             fn = tool["function"]
-            assert required_keys.issubset(fn.keys()), (
-                f"Missing keys in {fn.get('name', 'unknown')}: " f"{required_keys - fn.keys()}"
-            )
+            assert required_keys.issubset(
+                fn.keys()
+            ), f"Missing keys in {fn.get('name', 'unknown')}: {required_keys - fn.keys()}"
 
     def test_module_ids_are_normalized(self, registry: StubRegistry) -> None:
         """All module IDs are normalized (dots replaced with dashes for OpenAI)."""

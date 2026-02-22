@@ -44,7 +44,7 @@ class ModuleIDNormalizer:
         """
         if not MODULE_ID_PATTERN.match(module_id):
             raise ValueError(
-                f"Invalid module ID '{module_id}': must match pattern " f"^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+                f"Invalid module ID '{module_id}': must match pattern ^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
             )
         return module_id.replace(".", "-")
 

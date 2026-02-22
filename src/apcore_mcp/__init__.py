@@ -111,7 +111,7 @@ def serve(
         elif transport == "sse":
             await transport_manager.run_sse(server, init_options, host=host, port=port)
         else:
-            raise ValueError(f"Unknown transport: {transport!r}. " "Expected 'stdio', 'streamable-http', or 'sse'.")
+            raise ValueError(f"Unknown transport: {transport!r}. Expected 'stdio', 'streamable-http', or 'sse'.")
 
     if on_startup is not None:
         on_startup()

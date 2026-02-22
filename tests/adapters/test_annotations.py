@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from apcore_mcp.adapters.annotations import AnnotationMapper
 
+from apcore_mcp.adapters.annotations import AnnotationMapper
 from tests.conftest import ModuleAnnotations
 
 

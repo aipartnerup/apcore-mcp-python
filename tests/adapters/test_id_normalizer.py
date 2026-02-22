@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 import pytest
+
 from apcore_mcp.adapters.id_normalizer import ModuleIDNormalizer
 
 
@@ -70,10 +71,9 @@ class TestModuleIDNormalizer:
         for module_id in test_ids:
             normalized = normalizer.normalize(module_id)
             denormalized = normalizer.denormalize(normalized)
-            assert denormalized == module_id, (
-                f"Roundtrip failed for '{module_id}': "
-                f"normalized to '{normalized}', denormalized to '{denormalized}'"
-            )
+            assert (
+                denormalized == module_id
+            ), f"Roundtrip failed for '{module_id}': normalized to '{normalized}', denormalized to '{denormalized}'"
 
     def test_normalize_empty_string_raises(self, normalizer: ModuleIDNormalizer) -> None:
         """Test normalizing an empty string raises ValueError."""
@@ -112,6 +112,6 @@ class TestModuleIDNormalizer:
 
         for module_id in test_ids:
             normalized = normalizer.normalize(module_id)
-            assert pattern.match(normalized), (
-                f"Normalized result '{normalized}' from '{module_id}' " f"does not match pattern ^[a-zA-Z0-9_-]*$"
-            )
+            assert pattern.match(
+                normalized
+            ), f"Normalized result '{normalized}' from '{module_id}' does not match pattern ^[a-zA-Z0-9_-]*$"
