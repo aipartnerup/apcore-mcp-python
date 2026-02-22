@@ -9,6 +9,9 @@ from mcp import types as mcp_types
 from mcp.server.lowlevel import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
+from apcore.schema.exporter import SchemaExporter
+from apcore.schema.types import SchemaDefinition
+
 from apcore_mcp.adapters.annotations import AnnotationMapper
 from apcore_mcp.adapters.schema import SchemaConverter
 
@@ -21,6 +24,7 @@ class MCPServerFactory:
     def __init__(self) -> None:
         self._schema_converter = SchemaConverter()
         self._annotation_mapper = AnnotationMapper()
+        self._schema_exporter = SchemaExporter()
 
     def create_server(self, name: str = "apcore-mcp", version: str = "0.1.0") -> Server:
         """Create a new MCP low-level Server instance.
@@ -41,11 +45,8 @@ class MCPServerFactory:
         - descriptor.module_id -> Tool.name
         - descriptor.description -> Tool.description
         - SchemaConverter.convert_input_schema(descriptor) -> Tool.inputSchema
-        - AnnotationMapper.to_mcp_annotations(descriptor.annotations) -> ToolAnnotations
-
-        The AnnotationMapper returns a dict with snake_case keys
-        (read_only_hint, destructive_hint, etc.). This method converts them
-        to the camelCase ToolAnnotations fields (readOnlyHint, etc.).
+        - SchemaExporter.export_mcp() -> ToolAnnotations hints (camelCase)
+        - AnnotationMapper -> requires_approval, streaming (_meta), title
 
         Args:
             descriptor: ModuleDescriptor with module_id, description,
@@ -55,24 +56,30 @@ class MCPServerFactory:
             An MCP Tool object ready for registration.
         """
         input_schema = self._schema_converter.convert_input_schema(descriptor)
-        annotations_dict = self._annotation_mapper.to_mcp_annotations(descriptor.annotations)
+
+        # Use SchemaExporter for canonical MCP annotation mapping
+        schema_def = SchemaDefinition(
+            module_id=descriptor.module_id,
+            description=descriptor.description,
+            input_schema=descriptor.input_schema,
+            output_schema=getattr(descriptor, "output_schema", {}),
+        )
+        exported = self._schema_exporter.export_mcp(schema_def, annotations=descriptor.annotations)
+        hints = exported["annotations"]
 
         tool_annotations = mcp_types.ToolAnnotations(
-            readOnlyHint=annotations_dict.get("read_only_hint"),
-            destructiveHint=annotations_dict.get("destructive_hint"),
-            idempotentHint=annotations_dict.get("idempotent_hint"),
-            openWorldHint=annotations_dict.get("open_world_hint"),
-            title=annotations_dict.get("title"),
+            readOnlyHint=hints.get("readOnlyHint"),
+            destructiveHint=hints.get("destructiveHint"),
+            idempotentHint=hints.get("idempotentHint"),
+            openWorldHint=hints.get("openWorldHint"),
+            title=None,
         )
 
         # Build optional _meta with requires_approval and streaming hints
         meta: dict[str, object] | None = None
         if self._annotation_mapper.has_requires_approval(descriptor.annotations):
             meta = {"requires_approval": True}
-        if (
-            descriptor.annotations is not None
-            and getattr(descriptor.annotations, "streaming", False)
-        ):
+        if hints.get("streaming"):
             if meta is None:
                 meta = {}
             meta["streaming"] = True

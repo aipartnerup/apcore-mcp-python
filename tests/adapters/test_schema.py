@@ -207,3 +207,124 @@ class TestSchemaConverter:
 
         # Verify it's a deep copy, not the same object
         assert result is not simple_descriptor.input_schema
+
+    def test_circular_ref_raises_value_error(self, converter):
+        """Test that circular $ref raises ValueError."""
+        from tests.conftest import ModuleDescriptor
+
+        descriptor = ModuleDescriptor(
+            module_id="test.circular",
+            description="Test circular ref",
+            input_schema={
+                "type": "object",
+                "$defs": {
+                    "Node": {
+                        "type": "object",
+                        "properties": {
+                            "child": {"$ref": "#/$defs/Node"},
+                        },
+                    },
+                },
+                "properties": {
+                    "root": {"$ref": "#/$defs/Node"},
+                },
+            },
+            output_schema={},
+        )
+
+        with pytest.raises(ValueError, match="Circular \\$ref detected"):
+            converter.convert_input_schema(descriptor)
+
+    def test_unsupported_ref_format_raises(self, converter):
+        """Test that an unsupported $ref format raises ValueError."""
+        from tests.conftest import ModuleDescriptor
+
+        descriptor = ModuleDescriptor(
+            module_id="test.bad_ref",
+            description="Test bad ref",
+            input_schema={
+                "type": "object",
+                "$defs": {"Foo": {"type": "string"}},
+                "properties": {
+                    "x": {"$ref": "http://example.com/schema"},
+                },
+            },
+            output_schema={},
+        )
+
+        with pytest.raises(ValueError, match="Unsupported \\$ref format"):
+            converter.convert_input_schema(descriptor)
+
+    def test_missing_ref_definition_raises(self, converter):
+        """Test that a $ref to a missing definition raises ValueError."""
+        from tests.conftest import ModuleDescriptor
+
+        descriptor = ModuleDescriptor(
+            module_id="test.missing_def",
+            description="Test missing def",
+            input_schema={
+                "type": "object",
+                "$defs": {},
+                "properties": {
+                    "x": {"$ref": "#/$defs/NonExistent"},
+                },
+            },
+            output_schema={},
+        )
+
+        with pytest.raises(ValueError, match="Definition not found"):
+            converter.convert_input_schema(descriptor)
+
+    def test_schema_with_list_items(self, converter):
+        """Test that list values in schemas are handled correctly."""
+        from tests.conftest import ModuleDescriptor
+
+        descriptor = ModuleDescriptor(
+            module_id="test.list_items",
+            description="Test list items",
+            input_schema={
+                "type": "object",
+                "$defs": {
+                    "Item": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                    },
+                },
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {"$ref": "#/$defs/Item"},
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+            },
+            output_schema={},
+        )
+
+        result = converter.convert_input_schema(descriptor)
+
+        assert "$defs" not in result
+        assert result["properties"]["items"]["items"] == {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+        }
+
+    def test_ensure_object_type_with_mismatched_type(self, converter):
+        """Test schema with properties but non-object type gets corrected."""
+        from tests.conftest import ModuleDescriptor
+
+        descriptor = ModuleDescriptor(
+            module_id="test.mismatch",
+            description="Mismatched type",
+            input_schema={
+                "type": "string",
+                "properties": {"field": {"type": "string"}},
+            },
+            output_schema={},
+        )
+
+        result = converter.convert_input_schema(descriptor)
+        assert result["type"] == "object"

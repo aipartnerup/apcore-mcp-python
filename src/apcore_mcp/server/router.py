@@ -35,9 +35,10 @@ class ExecutionRouter:
             optionally an async ``stream(module_id, inputs)`` generator).
     """
 
-    def __init__(self, executor: Any) -> None:
+    def __init__(self, executor: Any, *, validate_inputs: bool = False) -> None:
         self._executor = executor
         self._error_mapper = ErrorMapper()
+        self._validate_inputs = validate_inputs
 
     async def handle_call(
         self,
@@ -73,11 +74,9 @@ class ExecutionRouter:
 
         # ── Build context with MCP callbacks ─────────────────────────────
         context_data: dict[str, Any] = {}
-        has_callbacks = False
 
         # Inject progress callback if progress_token + send_notification available
         if progress_token is not None and send_notification is not None:
-            has_callbacks = True
             _pt = progress_token
             _sn = send_notification
 
@@ -102,7 +101,6 @@ class ExecutionRouter:
 
         # Inject elicitation callback if session available
         if session is not None:
-            has_callbacks = True
             _session = session
 
             async def _elicit_callback(
@@ -124,9 +122,24 @@ class ExecutionRouter:
 
             context_data[MCP_ELICIT_KEY] = _elicit_callback
 
-        context: Context | None = None
-        if has_callbacks:
-            context = Context.create(data=context_data)
+        context = Context.create(data=context_data)
+
+        # Pre-execution validation
+        if self._validate_inputs:
+            try:
+                validation = self._executor.validate(tool_name, arguments)
+                if not validation.valid:
+                    detail = "; ".join(
+                        f"{e.get('field', '?')}: {e.get('message', 'invalid')}"
+                        for e in validation.errors
+                    )
+                    return ([{"type": "text", "text": f"Validation failed: {detail}"}], True)
+            except AttributeError:
+                pass  # executor lacks validate() — skip
+            except Exception as error:
+                logger.debug("validate_inputs error for %s: %s", tool_name, error)
+                error_info = self._error_mapper.to_mcp_error(error)
+                return ([{"type": "text", "text": error_info["message"]}], True)
 
         # Streaming path: executor has stream() AND we have both helpers
         can_stream = (
@@ -161,7 +174,10 @@ class ExecutionRouter:
                 # Backward compat: executor doesn't accept context arg
                 result = await self._executor.call_async(tool_name, arguments)
             json_output = json.dumps(result, default=str)
-            return ([{"type": "text", "text": json_output}], False)
+            content: list[dict[str, str]] = [{"type": "text", "text": json_output}]
+            if context is not None:
+                content.append({"type": "text", "text": json.dumps({"_trace_id": context.trace_id})})
+            return (content, False)
         except Exception as error:
             logger.debug("handle_call error for %s: %s", tool_name, error)
             error_info = self._error_mapper.to_mcp_error(error)
@@ -209,7 +225,10 @@ class ExecutionRouter:
                 chunk_index += 1
 
             json_output = json.dumps(accumulated, default=str)
-            return ([{"type": "text", "text": json_output}], False)
+            content: list[dict[str, str]] = [{"type": "text", "text": json_output}]
+            if context is not None:
+                content.append({"type": "text", "text": json.dumps({"_trace_id": context.trace_id})})
+            return (content, False)
         except Exception as error:
             logger.debug("handle_call stream error for %s: %s", tool_name, error)
             error_info = self._error_mapper.to_mcp_error(error)

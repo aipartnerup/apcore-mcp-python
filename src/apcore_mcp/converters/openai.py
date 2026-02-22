@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import copy
 from typing import Any
+
+from apcore.schema.strict import _apply_llm_descriptions, to_strict_schema
 
 from apcore_mcp.adapters.annotations import AnnotationMapper
 from apcore_mcp.adapters.id_normalizer import ModuleIDNormalizer
@@ -117,70 +118,27 @@ class OpenAIConverter:
         }
 
     def _apply_strict_mode(self, schema: dict[str, Any]) -> dict[str, Any]:
-        """Convert schema to OpenAI strict mode.
+        """Convert schema to OpenAI strict mode via apcore's to_strict_schema().
 
-        Transformations applied:
-        1. Set additionalProperties: false on all object types
-        2. Make all properties required (add to "required" list)
-        3. Optional properties (not already in required) become nullable
-           (type becomes [original, "null"])
-        4. Remove default values
-        5. Recurse into nested objects and array items
+        Steps:
+        1. Deep-copies the input (done by to_strict_schema)
+        2. Promotes x-llm-description to description (before stripping)
+        3. Strips x-* extensions and default values
+        4. Sets additionalProperties: false on all objects
+        5. Makes all properties required (sorted alphabetically)
+        6. Optional properties become nullable
+        7. Recurses into nested objects, array items, oneOf/anyOf/allOf, and $defs
+
+        This matches the behavior of SchemaExporter.export_openai().
 
         Args:
             schema: JSON Schema dict to transform.
 
         Returns:
-            New schema dict with strict mode applied (deep copy).
+            New schema dict with strict mode applied.
         """
+        import copy
+
         schema = copy.deepcopy(schema)
-        return self._apply_strict_recursive(schema)
-
-    def _apply_strict_recursive(self, schema: dict[str, Any]) -> dict[str, Any]:
-        """Recursively apply strict mode transformations to a schema node.
-
-        Args:
-            schema: Schema node to transform in place.
-
-        Returns:
-            The transformed schema node.
-        """
-        if not isinstance(schema, dict):
-            return schema
-
-        # Process object types
-        if schema.get("type") == "object" and "properties" in schema:
-            schema["additionalProperties"] = False
-
-            properties = schema["properties"]
-            existing_required = set(schema.get("required", []))
-            all_property_names = list(properties.keys())
-
-            # Make optional properties nullable and add them to required
-            for prop_name in all_property_names:
-                prop_schema = properties[prop_name]
-
-                # Remove default values
-                prop_schema.pop("default", None)
-
-                # If not already required, make it nullable
-                if prop_name not in existing_required:
-                    current_type = prop_schema.get("type")
-                    if current_type is not None and current_type != "null":
-                        if isinstance(current_type, list):
-                            if "null" not in current_type:
-                                prop_schema["type"] = current_type + ["null"]
-                        else:
-                            prop_schema["type"] = [current_type, "null"]
-
-                # Recurse into nested properties
-                properties[prop_name] = self._apply_strict_recursive(prop_schema)
-
-            # All properties become required
-            schema["required"] = all_property_names
-
-        # Recurse into array items
-        if schema.get("type") == "array" and "items" in schema:
-            schema["items"] = self._apply_strict_recursive(schema["items"])
-
-        return schema
+        _apply_llm_descriptions(schema)
+        return to_strict_schema(schema)

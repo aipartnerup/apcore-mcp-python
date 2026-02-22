@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-22
+
+### Added
+
+- **trace_id passback**: Every successful response now includes a second content item with `_trace_id` metadata for request tracing.
+- **validate_inputs**: `serve(validate_inputs=True)` enables pre-execution input validation via `Executor.validate()`. Invalid inputs are rejected before module execution.
+- **Always-on Context**: `Context` is now always created for every tool call, enabling trace_id generation even without MCP callbacks.
+
+### Changed
+
+- **SchemaExporter integration**: `MCPServerFactory.build_tool()` now uses `apcore.schema.exporter.SchemaExporter.export_mcp()` for canonical MCP annotation mapping instead of duplicating logic.
+- **to_strict_schema() delegation**: `OpenAIConverter._apply_strict_mode()` now delegates to `apcore.schema.strict.to_strict_schema()` instead of custom recursive implementation. This adds x-* extension stripping, oneOf/anyOf/allOf recursion, $defs recursion, and alphabetically sorted required lists.
+- **Dependency bump**: Requires `apcore>=0.5.0` (was `>=0.2.0`).
+
+### Removed
+
+- **Custom strict mode**: Removed `OpenAIConverter._apply_strict_recursive()` in favor of `to_strict_schema()`.
+
 ## [0.2.0] - 2026-02-20
 
 ### Added
@@ -46,5 +64,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Filtering**: `tags` and `prefix` parameters for selective module exposure.
 - **260 tests**: Unit, integration, E2E, performance, and security test suites.
 
+[0.3.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/aipartnerup/apcore-mcp-python/releases/tag/v0.1.0

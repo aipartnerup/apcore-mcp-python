@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import apcore_mcp
-from apcore_mcp import _resolve_executor, _resolve_registry, serve, to_openai_tools
+from apcore_mcp import serve, to_openai_tools
+from apcore_mcp._utils import resolve_executor, resolve_registry
 from tests.conftest import ModuleAnnotations, ModuleDescriptor
 
 # ---------------------------------------------------------------------------
@@ -92,35 +93,35 @@ def executor(registry) -> StubExecutor:
 
 
 # ===========================================================================
-# Tests for _resolve_registry
+# Tests for resolve_registry
 # ===========================================================================
 
 
 class TestResolveRegistry:
-    """Tests for _resolve_registry helper."""
+    """Tests for resolve_registry helper."""
 
     def test_returns_registry_from_executor(self, registry, executor):
         """When given an executor, extracts its .registry attribute."""
-        result = _resolve_registry(executor)
+        result = resolve_registry(executor)
         assert result is registry
 
     def test_returns_registry_directly(self, registry):
         """When given a registry (no .registry attr), returns it as-is."""
-        result = _resolve_registry(registry)
+        result = resolve_registry(registry)
         assert result is registry
 
 
 # ===========================================================================
-# Tests for _resolve_executor
+# Tests for resolve_executor
 # ===========================================================================
 
 
 class TestResolveExecutor:
-    """Tests for _resolve_executor helper."""
+    """Tests for resolve_executor helper."""
 
     def test_returns_executor_directly(self, executor):
         """When given an executor (has .call_async), returns it as-is."""
-        result = _resolve_executor(executor)
+        result = resolve_executor(executor)
         assert result is executor
 
     def test_creates_executor_from_registry(self, registry):
@@ -137,7 +138,7 @@ class TestResolveExecutor:
         sys.modules["apcore.executor"] = fake_apcore_executor
 
         try:
-            result = _resolve_executor(registry)
+            result = resolve_executor(registry)
             mock_executor_cls.assert_called_once_with(registry)
             assert result is mock_executor_instance
         finally:
@@ -340,7 +341,7 @@ class TestServe:
 
             serve(executor)
 
-            # Router should receive the executor itself
-            mock_router_cls.assert_called_once_with(executor)
+            # Router should receive the executor with validate_inputs
+            mock_router_cls.assert_called_once_with(executor, validate_inputs=False)
             # Factory should receive the extracted registry
             mock_factory.build_tools.assert_called_once_with(executor.registry)

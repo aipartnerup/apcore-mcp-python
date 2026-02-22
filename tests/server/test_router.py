@@ -191,13 +191,17 @@ class TestExecutionRouter:
         )
 
         assert is_error is False
-        assert len(content) == 1
+        assert len(content) == 2  # result + trace_id
         assert content[0]["type"] == "text"
 
         # The text should be valid JSON containing the result
         parsed = json.loads(content[0]["text"])
         assert parsed["output_path"] == "/tmp/out.png"
         assert parsed["new_size"] == [100, 100]
+
+        # Second content item should contain trace_id
+        trace_meta = json.loads(content[1]["text"])
+        assert "_trace_id" in trace_meta
 
     async def test_handle_call_success_json_serialization(self) -> None:
         """Output dict is properly JSON serialized with all types preserved."""
@@ -216,6 +220,7 @@ class TestExecutionRouter:
         content, is_error = await router.handle_call("test.module", {})
 
         assert is_error is False
+        assert len(content) == 2  # result + trace_id
         parsed = json.loads(content[0]["text"])
         assert parsed == result_data
 
@@ -228,8 +233,8 @@ class TestExecutionRouter:
         call_module_id, call_inputs, call_context = executor.calls[0]
         assert call_module_id == "image.resize"
         assert call_inputs == arguments
-        # No extra → no context
-        assert call_context is None
+        # Context is always created now
+        assert call_context is not None
 
     async def test_handle_call_empty_arguments(self) -> None:
         """Works correctly with empty dict arguments."""
@@ -239,6 +244,7 @@ class TestExecutionRouter:
         content, is_error = await router.handle_call("system.ping", {})
 
         assert is_error is False
+        assert len(content) == 2  # result + trace_id
         parsed = json.loads(content[0]["text"])
         assert parsed["status"] == "ok"
 
@@ -336,6 +342,7 @@ class TestExecutionRouter:
         content, is_error = await router.handle_call("time.now", {})
 
         assert is_error is False
+        assert len(content) == 2  # result + trace_id
         parsed = json.loads(content[0]["text"])
         # datetime should be converted to string via default=str
         assert parsed["timestamp"] == str(now)
@@ -362,7 +369,7 @@ class TestExecutionRouter:
         # All three should succeed
         for content, is_error in results_list:
             assert is_error is False
-            assert len(content) == 1
+            assert len(content) == 2  # result + trace_id
             assert content[0]["type"] == "text"
 
         # Verify correct results were returned for each
@@ -416,8 +423,8 @@ class TestExecutionRouter:
         assert MCP_ELICIT_KEY in context.data
         assert callable(context.data[MCP_ELICIT_KEY])
 
-    async def test_no_context_when_no_extra_provided(self) -> None:
-        """Context is None when no extra is provided (backward compat)."""
+    async def test_context_always_created_even_without_extra(self) -> None:
+        """Context is always created, even when no extra is provided."""
         executor = StubExecutor(results={"test.module": {"ok": True}})
         router = ExecutionRouter(executor)
 
@@ -425,19 +432,20 @@ class TestExecutionRouter:
 
         assert len(executor.calls) == 1
         _, _, context = executor.calls[0]
-        assert context is None
+        assert context is not None
+        assert hasattr(context, "trace_id")
+        assert context.trace_id is not None
 
     async def test_backward_compat_legacy_executor(self) -> None:
         """TypeError fallback when executor doesn't accept context arg."""
         executor = LegacyStubExecutor(results={"test.module": {"ok": True}})
         router = ExecutionRouter(executor)
 
-        # Provide session so context is built
-        extra: dict[str, Any] = {"session": AsyncMock()}
-
-        content, is_error = await router.handle_call("test.module", {}, extra=extra)
+        # Context is always created now, so legacy fallback always triggers
+        content, is_error = await router.handle_call("test.module", {})
 
         assert is_error is False
+        assert len(content) == 2  # result + trace_id
         parsed = json.loads(content[0]["text"])
         assert parsed == {"ok": True}
         # Legacy executor should still have been called
@@ -467,6 +475,7 @@ class TestExecutionRouter:
         content, is_error = await router.handle_call("test.module", {}, extra=extra)
 
         assert is_error is False
+        assert len(content) == 2  # result + trace_id
         assert send_notification.call_count == 1
         notification = send_notification.call_args[0][0]
         assert notification["method"] == "notifications/progress"
@@ -474,3 +483,196 @@ class TestExecutionRouter:
         assert notification["params"]["progress"] == 5
         assert notification["params"]["total"] == 10
         assert notification["params"]["message"] == "halfway"
+
+    async def test_elicit_callback_calls_session_elicit_form(self) -> None:
+        """The injected elicit callback calls session.elicit_form and returns result."""
+        received_context: list[Any] = []
+
+        class ElicitingExecutor:
+            async def call_async(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> Any:
+                received_context.append(context)
+                if context and MCP_ELICIT_KEY in context.data:
+                    result = await context.data[MCP_ELICIT_KEY]("Confirm?", {"type": "object"})
+                    return {"elicit_result": result}
+                return {"no_elicit": True}
+
+        mock_session = AsyncMock()
+        mock_result = AsyncMock()
+        mock_result.action = "accept"
+        mock_result.content = {"confirmed": True}
+        mock_session.elicit_form = AsyncMock(return_value=mock_result)
+
+        executor = ElicitingExecutor()
+        router = ExecutionRouter(executor)
+
+        extra: dict[str, Any] = {"session": mock_session}
+
+        content, is_error = await router.handle_call("test.module", {}, extra=extra)
+
+        assert is_error is False
+        assert len(content) == 2  # result + trace_id
+        parsed = json.loads(content[0]["text"])
+        assert parsed["elicit_result"]["action"] == "accept"
+        assert parsed["elicit_result"]["content"] == {"confirmed": True}
+        mock_session.elicit_form.assert_called_once_with(
+            message="Confirm?",
+            requestedSchema={"type": "object"},
+        )
+
+    async def test_elicit_callback_returns_none_on_error(self) -> None:
+        """The injected elicit callback returns None when session.elicit_form raises."""
+        received_context: list[Any] = []
+
+        class ElicitingExecutor:
+            async def call_async(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> Any:
+                received_context.append(context)
+                if context and MCP_ELICIT_KEY in context.data:
+                    result = await context.data[MCP_ELICIT_KEY]("Confirm?")
+                    return {"elicit_result": result}
+                return {"no_elicit": True}
+
+        mock_session = AsyncMock()
+        mock_session.elicit_form = AsyncMock(side_effect=RuntimeError("Connection lost"))
+
+        executor = ElicitingExecutor()
+        router = ExecutionRouter(executor)
+
+        extra: dict[str, Any] = {"session": mock_session}
+
+        content, is_error = await router.handle_call("test.module", {}, extra=extra)
+
+        assert is_error is False
+        assert len(content) == 2  # result + trace_id
+        parsed = json.loads(content[0]["text"])
+        assert parsed["elicit_result"] is None
+
+    async def test_elicit_callback_default_schema(self) -> None:
+        """The injected elicit callback passes empty dict when schema is None."""
+        received_context: list[Any] = []
+
+        class ElicitingExecutor:
+            async def call_async(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> Any:
+                received_context.append(context)
+                if context and MCP_ELICIT_KEY in context.data:
+                    await context.data[MCP_ELICIT_KEY]("Confirm?", None)
+                return {"ok": True}
+
+        mock_session = AsyncMock()
+        mock_result = AsyncMock()
+        mock_result.action = "decline"
+        mock_result.content = None
+        mock_session.elicit_form = AsyncMock(return_value=mock_result)
+
+        executor = ElicitingExecutor()
+        router = ExecutionRouter(executor)
+
+        extra: dict[str, Any] = {"session": mock_session}
+
+        await router.handle_call("test.module", {}, extra=extra)
+
+        mock_session.elicit_form.assert_called_once_with(
+            message="Confirm?",
+            requestedSchema={},
+        )
+
+    # ── Tests for validate_inputs ────────────────────────────────────────
+
+    async def test_validate_inputs_blocks_invalid(self) -> None:
+        """validate_inputs=True rejects invalid inputs before execution."""
+        from dataclasses import dataclass, field as dc_field
+
+        @dataclass
+        class ValidationResult:
+            valid: bool
+            errors: list[dict[str, str]] = dc_field(default_factory=list)
+
+        class ValidatingExecutor:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, Any], Any]] = []
+
+            def validate(self, module_id: str, inputs: dict[str, Any]) -> ValidationResult:
+                return ValidationResult(
+                    valid=False,
+                    errors=[{"field": "width", "message": "required"}],
+                )
+
+            async def call_async(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> Any:
+                self.calls.append((module_id, inputs, context))
+                return {"ok": True}
+
+        executor = ValidatingExecutor()
+        router = ExecutionRouter(executor, validate_inputs=True)
+
+        content, is_error = await router.handle_call("image.resize", {})
+
+        assert is_error is True
+        assert "Validation failed" in content[0]["text"]
+        assert "width: required" in content[0]["text"]
+        # Executor should NOT have been called
+        assert len(executor.calls) == 0
+
+    async def test_validate_inputs_passes_valid(self) -> None:
+        """validate_inputs=True allows valid inputs through to execution."""
+        from dataclasses import dataclass, field as dc_field
+
+        @dataclass
+        class ValidationResult:
+            valid: bool
+            errors: list[dict[str, str]] = dc_field(default_factory=list)
+
+        class ValidatingExecutor:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, Any], Any]] = []
+
+            def validate(self, module_id: str, inputs: dict[str, Any]) -> ValidationResult:
+                return ValidationResult(valid=True)
+
+            async def call_async(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> Any:
+                self.calls.append((module_id, inputs, context))
+                return {"ok": True}
+
+        executor = ValidatingExecutor()
+        router = ExecutionRouter(executor, validate_inputs=True)
+
+        content, is_error = await router.handle_call("test.module", {"x": 1})
+
+        assert is_error is False
+        assert len(executor.calls) == 1
+
+    async def test_validate_inputs_skips_when_executor_lacks_validate(self) -> None:
+        """validate_inputs=True gracefully skips if executor has no validate()."""
+        executor = StubExecutor(results={"test.module": {"ok": True}})
+        router = ExecutionRouter(executor, validate_inputs=True)
+
+        content, is_error = await router.handle_call("test.module", {})
+
+        assert is_error is False
+        parsed = json.loads(content[0]["text"])
+        assert parsed == {"ok": True}
+
+    async def test_validate_inputs_disabled_by_default(self) -> None:
+        """validate_inputs defaults to False (no validation)."""
+        executor = StubExecutor(results={"test.module": {"ok": True}})
+        router = ExecutionRouter(executor)
+
+        content, is_error = await router.handle_call("test.module", {})
+
+        assert is_error is False
+
+    async def test_validate_inputs_handles_validate_exception(self) -> None:
+        """Exceptions from executor.validate() are caught and returned as errors."""
+
+        class FailingValidateExecutor:
+            def validate(self, module_id: str, inputs: dict[str, Any]) -> Any:
+                raise ModuleNotFoundStubError(module_id)
+
+            async def call_async(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> Any:
+                return {"ok": True}
+
+        executor = FailingValidateExecutor()
+        router = ExecutionRouter(executor, validate_inputs=True)
+
+        content, is_error = await router.handle_call("nonexistent.module", {})
+
+        assert is_error is True
+        assert "nonexistent.module" in content[0]["text"]

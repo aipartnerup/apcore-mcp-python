@@ -9,7 +9,7 @@ REGISTRY_EVENTS: dict[str, str] = {
     "UNREGISTER": "unregister",
 }
 
-ErrorCodes: dict[str, str] = {
+ERROR_CODES: dict[str, str] = {
     "MODULE_NOT_FOUND": "MODULE_NOT_FOUND",
     "SCHEMA_VALIDATION_ERROR": "SCHEMA_VALIDATION_ERROR",
     "ACL_DENIED": "ACL_DENIED",

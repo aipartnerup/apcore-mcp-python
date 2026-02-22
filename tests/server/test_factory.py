@@ -264,6 +264,82 @@ class TestRegisterHandlers:
         assert result.tools[0].name == "test.tool"
 
 
+class TestBuildToolStreamingMeta:
+    """Tests for build_tool with streaming annotations."""
+
+    @pytest.fixture
+    def factory(self) -> MCPServerFactory:
+        return MCPServerFactory()
+
+    def test_build_tool_with_requires_approval_meta(
+        self, factory: MCPServerFactory, destructive_descriptor: ModuleDescriptor
+    ) -> None:
+        """build_tool includes _meta.requires_approval when annotation is set."""
+        tool = factory.build_tool(destructive_descriptor)
+        # destructive_descriptor has requires_approval=True
+        assert tool.meta is not None
+        assert tool.meta.get("requires_approval") is True
+
+    def test_build_tool_with_streaming_meta(self, factory: MCPServerFactory) -> None:
+        """build_tool includes _meta.streaming when annotation has streaming=True."""
+        from dataclasses import dataclass
+
+        @dataclass(frozen=True)
+        class StreamAnnotations:
+            readonly: bool = False
+            destructive: bool = False
+            idempotent: bool = False
+            requires_approval: bool = False
+            open_world: bool = True
+            streaming: bool = True
+
+        descriptor = ModuleDescriptor(
+            module_id="stream.tool",
+            description="Streaming tool",
+            input_schema={"type": "object", "properties": {}},
+            output_schema={},
+            annotations=StreamAnnotations(),
+        )
+
+        tool = factory.build_tool(descriptor)
+        assert tool.meta is not None
+        assert tool.meta.get("streaming") is True
+
+    def test_build_tool_with_both_approval_and_streaming(self, factory: MCPServerFactory) -> None:
+        """build_tool includes both requires_approval and streaming in _meta."""
+        from dataclasses import dataclass
+
+        @dataclass(frozen=True)
+        class FullAnnotations:
+            readonly: bool = False
+            destructive: bool = True
+            idempotent: bool = False
+            requires_approval: bool = True
+            open_world: bool = False
+            streaming: bool = True
+
+        descriptor = ModuleDescriptor(
+            module_id="full.tool",
+            description="Full tool",
+            input_schema={"type": "object", "properties": {}},
+            output_schema={},
+            annotations=FullAnnotations(),
+        )
+
+        tool = factory.build_tool(descriptor)
+        assert tool.meta is not None
+        assert tool.meta.get("requires_approval") is True
+        assert tool.meta.get("streaming") is True
+
+    def test_build_tool_no_meta_when_no_special_annotations(
+        self, factory: MCPServerFactory, simple_descriptor: ModuleDescriptor
+    ) -> None:
+        """build_tool has no _meta when there's no requires_approval or streaming."""
+        tool = factory.build_tool(simple_descriptor)
+        # simple_descriptor has idempotent=True but NOT requires_approval or streaming
+        assert tool.meta is None
+
+
 class TestBuildInitOptions:
     """Tests for MCPServerFactory.build_init_options."""
 

@@ -68,23 +68,39 @@ class SchemaConverter:
 
         return schema
 
-    def _inline_refs(self, schema: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
+    def _inline_refs(
+        self,
+        schema: dict[str, Any],
+        defs: dict[str, Any],
+        _seen: set[str] | None = None,
+    ) -> dict[str, Any]:
         """Recursively inline all $ref references, removing $defs.
 
         Args:
             schema: Schema dict that may contain $refs
             defs: Dictionary of definitions from $defs
+            _seen: Internal set tracking visited $ref paths to prevent
+                infinite recursion on circular references.
 
         Returns:
             Schema with all $refs replaced by their definitions
+
+        Raises:
+            ValueError: If a circular $ref is detected.
         """
+        if _seen is None:
+            _seen = set()
+
         if isinstance(schema, dict):
             # If this is a $ref, resolve it
             if "$ref" in schema:
                 ref_path = schema["$ref"]
+                if ref_path in _seen:
+                    raise ValueError(f"Circular $ref detected: {ref_path}")
+                _seen = _seen | {ref_path}
                 resolved = self._resolve_ref(ref_path, defs)
                 # Recursively inline refs in the resolved schema
-                return self._inline_refs(resolved, defs)
+                return self._inline_refs(resolved, defs, _seen)
 
             # Otherwise, recursively process all values
             result = {}
@@ -92,11 +108,11 @@ class SchemaConverter:
                 if key == "$defs":
                     # Skip $defs, we'll remove it later
                     continue
-                result[key] = self._inline_refs(value, defs)
+                result[key] = self._inline_refs(value, defs, _seen)
             return result
         elif isinstance(schema, list):
             # Recursively process list items
-            return [self._inline_refs(item, defs) for item in schema]
+            return [self._inline_refs(item, defs, _seen) for item in schema]
         else:
             # Primitive value, return as-is
             return schema

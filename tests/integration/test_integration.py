@@ -168,7 +168,7 @@ class TestFullMCPFlow:
         """Calling the router with a valid tool name returns success."""
         content, is_error = await router.handle_call("image.resize", {"width": 800})
         assert is_error is False
-        assert len(content) == 1
+        assert len(content) == 2  # result + trace_id
         assert content[0]["type"] == "text"
 
     async def test_router_result_contains_expected_data(self, router: ExecutionRouter) -> None:

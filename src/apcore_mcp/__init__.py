@@ -7,20 +7,19 @@ import logging
 from collections.abc import Callable
 
 from apcore_mcp._utils import resolve_executor, resolve_registry
+from apcore_mcp._version import __version__
 from apcore_mcp.adapters.annotations import AnnotationMapper
 from apcore_mcp.adapters.errors import ErrorMapper
 from apcore_mcp.adapters.id_normalizer import ModuleIDNormalizer
 from apcore_mcp.adapters.schema import SchemaConverter
-from apcore_mcp.constants import MODULE_ID_PATTERN, REGISTRY_EVENTS, ErrorCodes
-from apcore_mcp.helpers import MCP_ELICIT_KEY, MCP_PROGRESS_KEY, elicit, report_progress
+from apcore_mcp.constants import ERROR_CODES, MODULE_ID_PATTERN, REGISTRY_EVENTS
 from apcore_mcp.converters.openai import OpenAIConverter
+from apcore_mcp.helpers import MCP_ELICIT_KEY, MCP_PROGRESS_KEY, elicit, report_progress
 from apcore_mcp.server.factory import MCPServerFactory
 from apcore_mcp.server.listener import RegistryListener
 from apcore_mcp.server.router import ExecutionRouter
 from apcore_mcp.server.server import MCPServer
 from apcore_mcp.server.transport import TransportManager
-
-__version__ = "0.2.0"
 
 __all__ = [
     # Public API
@@ -41,7 +40,7 @@ __all__ = [
     "OpenAIConverter",
     # Constants
     "REGISTRY_EVENTS",
-    "ErrorCodes",
+    "ERROR_CODES",
     "MODULE_ID_PATTERN",
     # Extension helpers
     "report_progress",
@@ -51,10 +50,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-# Re-export for backward compatibility
-_resolve_registry = resolve_registry
-_resolve_executor = resolve_executor
 
 
 def serve(
@@ -82,7 +77,7 @@ def serve(
         on_startup: Optional callback invoked after setup, before transport starts.
         on_shutdown: Optional callback invoked after the transport completes.
         dynamic: Reserved for future dynamic tool registration support.
-        validate_inputs: Reserved for future input validation support.
+        validate_inputs: Validate tool inputs against schemas before execution.
     """
     version = version or __version__
 
@@ -93,7 +88,7 @@ def serve(
     factory = MCPServerFactory()
     server = factory.create_server(name=name, version=version)
     tools = factory.build_tools(registry)
-    router = ExecutionRouter(executor)
+    router = ExecutionRouter(executor, validate_inputs=validate_inputs)
     factory.register_handlers(server, tools, router)
     init_options = factory.build_init_options(server, name=name, version=version)
 

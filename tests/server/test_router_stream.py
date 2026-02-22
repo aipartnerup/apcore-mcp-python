@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 from unittest.mock import AsyncMock
-
-import pytest
 
 from apcore_mcp.helpers import MCP_PROGRESS_KEY
 from apcore_mcp.server.router import ExecutionRouter
-
 
 # ---------------------------------------------------------------------------
 # Stub executors
@@ -107,8 +105,13 @@ class TestStreamingPath:
             assert notification["params"]["message"] == json.dumps(chunk, default=str)
 
         # Accumulated result should be shallow merge of all chunks
+        assert len(content) == 2  # result + trace_id
         parsed = json.loads(content[0]["text"])
         assert parsed == {"step": "done", "progress": 100}
+
+        # trace_id should be in second content item
+        trace_meta = json.loads(content[1]["text"])
+        assert "_trace_id" in trace_meta
 
     async def test_falls_back_to_call_async_when_no_stream_method(self) -> None:
         """When executor has no stream() method, falls back to call_async()
@@ -125,6 +128,7 @@ class TestStreamingPath:
         content, is_error = await router.handle_call("my.tool", {"x": 1}, extra=extra)
 
         assert is_error is False
+        assert len(content) == 2  # result + trace_id
         assert len(executor.calls) == 1
         # send_notification should NOT have been called
         send_notification.assert_not_called()
@@ -197,6 +201,7 @@ class TestStreamingPath:
         content, is_error = await router.handle_call("my.tool", {}, extra=extra)
 
         assert is_error is False
+        assert len(content) == 2  # result + trace_id
         parsed = json.loads(content[0]["text"])
         assert parsed == {"alpha": 1, "beta": 2, "gamma": 3}
 
@@ -219,6 +224,7 @@ class TestStreamingPath:
         content, is_error = await router.handle_call("my.tool", {}, extra=extra)
 
         assert is_error is False
+        assert len(content) == 2  # result + trace_id
         parsed = json.loads(content[0]["text"])
         assert parsed == {"status": "done", "count": 10}
 
@@ -269,7 +275,7 @@ class TestStreamingPath:
         assert "params" in notification
         params = notification["params"]
         assert params["progressToken"] == "tok-format"
-        assert isinstance(params["progress"], (int, float))
+        assert isinstance(params["progress"], int | float)
         assert "total" in params
         assert "message" in params
 
@@ -294,3 +300,39 @@ class TestStreamingPath:
         assert context is not None
         assert MCP_PROGRESS_KEY in context.data
         assert callable(context.data[MCP_PROGRESS_KEY])
+
+    async def test_stream_backward_compat_legacy_executor(self) -> None:
+        """Stream falls back when executor.stream() doesn't accept context arg."""
+
+        class LegacyStreamExecutor:
+            """Executor whose stream() doesn't accept context."""
+
+            def __init__(self, chunks: list[dict[str, Any]]) -> None:
+                self._chunks = chunks
+                self.stream_calls: list[tuple[str, dict[str, Any]]] = []
+
+            async def call_async(self, module_id: str, inputs: dict[str, Any]) -> Any:
+                return {}
+
+            async def stream(self, module_id: str, inputs: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+                self.stream_calls.append((module_id, inputs))
+                for chunk in self._chunks:
+                    yield chunk
+
+        chunks = [{"result": "ok"}]
+        executor = LegacyStreamExecutor(chunks)
+        router = ExecutionRouter(executor)
+
+        send_notification = AsyncMock()
+        extra: dict[str, Any] = {
+            "progress_token": "tok-legacy",
+            "send_notification": send_notification,
+        }
+
+        content, is_error = await router.handle_call("my.tool", {"x": 1}, extra=extra)
+
+        assert is_error is False
+        assert len(content) == 2  # result + trace_id
+        parsed = json.loads(content[0]["text"])
+        assert parsed == {"result": "ok"}
+        assert len(executor.stream_calls) == 1

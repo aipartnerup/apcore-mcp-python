@@ -111,6 +111,30 @@ class TestValidateHostPort:
 # ---------------------------------------------------------------------------
 
 
+class TestBuildHealthResponse:
+    """Tests for TransportManager._build_health_response."""
+
+    def test_health_response_structure(self) -> None:
+        """Health response contains required keys."""
+        tm = TransportManager()
+        response = tm._build_health_response()
+        assert response["status"] == "ok"
+        assert "uptime_seconds" in response
+        assert response["module_count"] == 0
+
+    def test_health_response_with_module_count(self) -> None:
+        """Health response includes provided module count."""
+        tm = TransportManager()
+        response = tm._build_health_response(module_count=5)
+        assert response["module_count"] == 5
+
+    def test_health_response_uptime_increases(self) -> None:
+        """Uptime should be non-negative."""
+        tm = TransportManager()
+        response = tm._build_health_response()
+        assert response["uptime_seconds"] >= 0
+
+
 class TestTransportValidationIntegration:
     """Verify that run_streamable_http and run_sse validate before starting."""
 

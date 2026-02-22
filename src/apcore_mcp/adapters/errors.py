@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from apcore_mcp.constants import ErrorCodes
+from apcore_mcp.constants import ERROR_CODES
 
 
 class ErrorMapper:
@@ -12,14 +12,14 @@ class ErrorMapper:
 
     # Error codes that should be treated as internal errors
     _INTERNAL_ERROR_CODES = {
-        ErrorCodes["CALL_DEPTH_EXCEEDED"],
-        ErrorCodes["CIRCULAR_CALL"],
-        ErrorCodes["CALL_FREQUENCY_EXCEEDED"],
+        ERROR_CODES["CALL_DEPTH_EXCEEDED"],
+        ERROR_CODES["CIRCULAR_CALL"],
+        ERROR_CODES["CALL_FREQUENCY_EXCEEDED"],
     }
 
     # Error codes that require sanitization (hide sensitive details)
     _SANITIZED_ERROR_CODES = {
-        ErrorCodes["ACL_DENIED"],
+        ERROR_CODES["ACL_DENIED"],
     }
 
     def to_mcp_error(self, error: Exception) -> dict[str, Any]:
@@ -40,7 +40,7 @@ class ErrorMapper:
         # Unknown exception - sanitize completely
         return {
             "is_error": True,
-            "error_type": ErrorCodes["INTERNAL_ERROR"],
+            "error_type": ERROR_CODES["INTERNAL_ERROR"],
             "message": "Internal error occurred",
             "details": None,
         }
@@ -49,7 +49,7 @@ class ErrorMapper:
         """Handle known apcore errors."""
         code = error.code
         message = error.message
-        details = error.details if error.details else None
+        details = error.details if error.details is not None else None
 
         # Convert internal errors to generic message
         if code in self._INTERNAL_ERROR_CODES:
@@ -70,7 +70,7 @@ class ErrorMapper:
             }
 
         # Schema validation errors need special formatting
-        if code == ErrorCodes["SCHEMA_VALIDATION_ERROR"]:
+        if code == ERROR_CODES["SCHEMA_VALIDATION_ERROR"] and details is not None:
             formatted_message = self._format_validation_errors(details.get("errors", []))
             return {
                 "is_error": True,
@@ -100,11 +100,3 @@ class ErrorMapper:
             error_lines.append(f"{field}: {msg}")
 
         return "Schema validation failed: " + "; ".join(error_lines)
-
-    def _sanitize_message(self, error: Exception) -> str:
-        """
-        Produce a safe error message that doesn't leak internals.
-
-        For unknown exceptions, returns a generic message.
-        """
-        return "Internal error occurred"

@@ -121,7 +121,7 @@ class TestConvertDescriptor:
         assert params.get("additionalProperties") is False
 
     def test_convert_descriptor_strict_mode_all_required(self, converter):
-        """In strict mode, all properties appear in the required list."""
+        """In strict mode, all properties appear in the required list (sorted)."""
         descriptor = ModuleDescriptor(
             module_id="test.strict",
             description="Strict test",
@@ -138,8 +138,8 @@ class TestConvertDescriptor:
         result = converter.convert_descriptor(descriptor, strict=True)
         params = result["function"]["parameters"]
 
-        # All properties must be in required
-        assert set(params["required"]) == {"required_field", "optional_field"}
+        # All properties must be in required (sorted alphabetically by to_strict_schema)
+        assert params["required"] == ["optional_field", "required_field"]
 
     def test_convert_descriptor_strict_mode_optional_nullable(self, converter):
         """Optional properties get nullable type in strict mode."""
@@ -211,7 +211,7 @@ class TestConvertDescriptor:
         nested = result["function"]["parameters"]["properties"]["config"]
 
         assert nested.get("additionalProperties") is False
-        assert set(nested["required"]) == {"key", "value"}
+        assert nested["required"] == ["key", "value"]  # sorted by to_strict_schema
         # value was optional, so it should be nullable
         assert nested["properties"]["value"]["type"] == ["string", "null"]
 
@@ -417,3 +417,137 @@ class TestConvertRegistry:
         names = [r["function"]["name"] for r in results]
         # StubRegistry.list() returns sorted, so a.mod comes before b.mod
         assert names == ["a-mod", "b-mod"]
+
+
+class TestStrictModeEdgeCases:
+    """Tests for strict mode edge cases in _apply_strict_recursive."""
+
+    @pytest.fixture
+    def converter(self):
+        return OpenAIConverter()
+
+    def test_strict_mode_list_type_already_has_null(self, converter):
+        """Strict mode does not duplicate 'null' when type is already a list with null."""
+        descriptor = ModuleDescriptor(
+            module_id="test.list_null",
+            description="Test",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "req_field": {"type": "string"},
+                    "opt_field": {"type": ["string", "null"]},
+                },
+                "required": ["req_field"],
+            },
+            output_schema={},
+        )
+
+        result = converter.convert_descriptor(descriptor, strict=True)
+        params = result["function"]["parameters"]
+        # opt_field already has null in type list, should not duplicate
+        assert params["properties"]["opt_field"]["type"] == ["string", "null"]
+
+    def test_strict_mode_list_type_without_null(self, converter):
+        """Strict mode appends null to list type that doesn't have it."""
+        descriptor = ModuleDescriptor(
+            module_id="test.list_no_null",
+            description="Test",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "req_field": {"type": "string"},
+                    "opt_field": {"type": ["string", "integer"]},
+                },
+                "required": ["req_field"],
+            },
+            output_schema={},
+        )
+
+        result = converter.convert_descriptor(descriptor, strict=True)
+        params = result["function"]["parameters"]
+        assert params["properties"]["opt_field"]["type"] == ["string", "integer", "null"]
+
+    def test_strict_mode_array_items_recursion(self, converter):
+        """Strict mode recurses into array items."""
+        descriptor = ModuleDescriptor(
+            module_id="test.array_recurse",
+            description="Test",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "value": {"type": "integer", "default": 0},
+                            },
+                            "required": ["name"],
+                        },
+                    },
+                },
+                "required": ["items"],
+            },
+            output_schema={},
+        )
+
+        result = converter.convert_descriptor(descriptor, strict=True)
+        params = result["function"]["parameters"]
+        item_schema = params["properties"]["items"]["items"]
+        # Items should have strict mode applied too
+        assert item_schema["additionalProperties"] is False
+        assert item_schema["required"] == ["name", "value"]  # sorted by to_strict_schema
+        # Default should be removed
+        assert "default" not in item_schema["properties"]["value"]
+
+    def test_strict_mode_strips_x_extensions(self, converter):
+        """to_strict_schema() strips x-* extension fields."""
+        descriptor = ModuleDescriptor(
+            module_id="test.extensions",
+            description="Test",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "x-llm-description": "A custom hint",
+                        "x-sensitive": True,
+                    },
+                },
+                "required": ["name"],
+            },
+            output_schema={},
+        )
+
+        result = converter.convert_descriptor(descriptor, strict=True)
+        params = result["function"]["parameters"]
+        # x-* fields should be stripped
+        assert "x-llm-description" not in params["properties"]["name"]
+        assert "x-sensitive" not in params["properties"]["name"]
+
+    def test_strict_mode_promotes_x_llm_description(self, converter):
+        """x-llm-description is promoted to description before stripping."""
+        descriptor = ModuleDescriptor(
+            module_id="test.llm_desc",
+            description="Test",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Original description",
+                        "x-llm-description": "LLM-optimized description",
+                    },
+                },
+                "required": ["query"],
+            },
+            output_schema={},
+        )
+
+        result = converter.convert_descriptor(descriptor, strict=True)
+        params = result["function"]["parameters"]
+        # x-llm-description should have been promoted to description
+        assert params["properties"]["query"]["description"] == "LLM-optimized description"
+        # x-llm-description key itself should be stripped
+        assert "x-llm-description" not in params["properties"]["query"]

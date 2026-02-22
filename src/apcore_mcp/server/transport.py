@@ -20,20 +20,20 @@ from starlette.routing import Mount, Route
 
 logger = logging.getLogger(__name__)
 
-_start_time = _time.monotonic()
-
-
-def _build_health_response(module_count: int = 0) -> dict[str, object]:
-    """Build health check response."""
-    return {
-        "status": "ok",
-        "uptime_seconds": round(_time.monotonic() - _start_time, 1),
-        "module_count": module_count,
-    }
-
 
 class TransportManager:
     """Manages MCP server transport lifecycle."""
+
+    def __init__(self) -> None:
+        self._start_time = _time.monotonic()
+
+    def _build_health_response(self, module_count: int = 0) -> dict[str, object]:
+        """Build health check response."""
+        return {
+            "status": "ok",
+            "uptime_seconds": round(_time.monotonic() - self._start_time, 1),
+            "module_count": module_count,
+        }
 
     async def run_stdio(
         self,
@@ -63,7 +63,7 @@ class TransportManager:
         async with transport.connect() as (read_stream, write_stream):
 
             async def _health(request: Any) -> JSONResponse:
-                return JSONResponse(_build_health_response())
+                return JSONResponse(self._build_health_response())
 
             app = Starlette(
                 routes=[
@@ -103,7 +103,7 @@ class TransportManager:
             return Response()
 
         async def _health(request: Any) -> JSONResponse:
-            return JSONResponse(_build_health_response())
+            return JSONResponse(self._build_health_response())
 
         app = Starlette(
             routes=[
