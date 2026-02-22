@@ -6,9 +6,8 @@ Automatic MCP Server & OpenAI Tools Bridge for apcore.
 
 ```
 ┌──────────────────┐
-│  comfyui-apcore  │  ← your existing apcore project (unchanged)
-│  robotics-apcore │
-│  audio-apcore    │
+│  django-apcore   │  ← your existing apcore project (unchanged)
+│  flask-apcore    │
 │  ...             │
 └────────┬─────────┘
          │  extensions directory
@@ -39,7 +38,7 @@ pip install apcore-mcp
 
 That's it. Your existing project requires no changes.
 
-Requires Python 3.10+ and `apcore >= 0.2.0`.
+Requires Python 3.10+ and `apcore >= 0.5.0`.
 
 ## Quick Start
 
