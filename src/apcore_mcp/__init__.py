@@ -7,7 +7,6 @@ import logging
 from collections.abc import Callable
 
 from apcore_mcp._utils import resolve_executor, resolve_registry
-from apcore_mcp._version import __version__
 from apcore_mcp.adapters.annotations import AnnotationMapper
 from apcore_mcp.adapters.errors import ErrorMapper
 from apcore_mcp.adapters.id_normalizer import ModuleIDNormalizer
@@ -50,6 +49,8 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+__version__ = "0.3.0"
 
 
 def serve(

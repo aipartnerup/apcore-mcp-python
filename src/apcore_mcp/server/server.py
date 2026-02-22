@@ -71,7 +71,7 @@ class MCPServer:
     def _run(self) -> None:
         """Internal: run the server event loop."""
         from apcore_mcp._utils import resolve_executor, resolve_registry
-        from apcore_mcp._version import __version__
+        from apcore_mcp.__init__ import __version__
         from apcore_mcp.server.factory import MCPServerFactory
         from apcore_mcp.server.router import ExecutionRouter
         from apcore_mcp.server.transport import TransportManager
