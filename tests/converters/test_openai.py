@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-
 from apcore_mcp.converters.openai import OpenAIConverter
+
 from tests.conftest import ModuleAnnotations, ModuleDescriptor
 
 # ---------------------------------------------------------------------------

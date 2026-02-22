@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-
 from apcore_mcp.helpers import MCP_ELICIT_KEY, MCP_PROGRESS_KEY
 from apcore_mcp.server.router import ExecutionRouter
 
@@ -579,7 +580,6 @@ class TestExecutionRouter:
 
     async def test_validate_inputs_blocks_invalid(self) -> None:
         """validate_inputs=True rejects invalid inputs before execution."""
-        from dataclasses import dataclass, field as dc_field
 
         @dataclass
         class ValidationResult:
@@ -613,7 +613,6 @@ class TestExecutionRouter:
 
     async def test_validate_inputs_passes_valid(self) -> None:
         """validate_inputs=True allows valid inputs through to execution."""
-        from dataclasses import dataclass, field as dc_field
 
         @dataclass
         class ValidationResult:

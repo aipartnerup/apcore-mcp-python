@@ -7,10 +7,10 @@ import threading
 from typing import Any
 
 import pytest
-from mcp import types as mcp_types
-
 from apcore_mcp.server.factory import MCPServerFactory
 from apcore_mcp.server.listener import RegistryListener
+from mcp import types as mcp_types
+
 from tests.conftest import ModuleAnnotations, ModuleDescriptor
 
 # ---------------------------------------------------------------------------

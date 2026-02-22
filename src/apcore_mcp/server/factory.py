@@ -5,12 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from apcore.schema.exporter import SchemaExporter
+from apcore.schema.types import SchemaDefinition
 from mcp import types as mcp_types
 from mcp.server.lowlevel import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
-
-from apcore.schema.exporter import SchemaExporter
-from apcore.schema.types import SchemaDefinition
 
 from apcore_mcp.adapters.annotations import AnnotationMapper
 from apcore_mcp.adapters.schema import SchemaConverter
