@@ -161,6 +161,7 @@ class MCPServerFactory:
             extra: dict[str, Any] = {"session": ctx.session}
 
             if progress_token is not None:
+
                 async def send_notification(notification: dict[str, Any]) -> None:
                     await ctx.session.send_progress_notification(
                         progress_token=notification["params"]["progressToken"],

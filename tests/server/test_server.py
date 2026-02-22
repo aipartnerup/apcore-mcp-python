@@ -419,7 +419,8 @@ class TestMCPServerRun:
             server._run()
 
             mock_router_cls.assert_called_once_with(
-                mock_executor, validate_inputs=True,
+                mock_executor,
+                validate_inputs=True,
             )
 
     def test_run_closes_loop_on_error(self) -> None:

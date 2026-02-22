@@ -130,8 +130,7 @@ class ExecutionRouter:
                 validation = self._executor.validate(tool_name, arguments)
                 if not validation.valid:
                     detail = "; ".join(
-                        f"{e.get('field', '?')}: {e.get('message', 'invalid')}"
-                        for e in validation.errors
+                        f"{e.get('field', '?')}: {e.get('message', 'invalid')}" for e in validation.errors
                     )
                     return ([{"type": "text", "text": f"Validation failed: {detail}"}], True)
             except AttributeError:
@@ -142,11 +141,7 @@ class ExecutionRouter:
                 return ([{"type": "text", "text": error_info["message"]}], True)
 
         # Streaming path: executor has stream() AND we have both helpers
-        can_stream = (
-            hasattr(self._executor, "stream")
-            and progress_token is not None
-            and send_notification is not None
-        )
+        can_stream = hasattr(self._executor, "stream") and progress_token is not None and send_notification is not None
 
         if can_stream:
             return await self._handle_stream(
