@@ -204,7 +204,10 @@ class TestBuildTools:
         bad_descriptor = ModuleDescriptor(
             module_id="bad.module",
             description="will fail",
-            input_schema={"$defs": {}, "properties": {"x": {"$ref": "#/$defs/Missing"}}},
+            input_schema={
+                "$defs": {},
+                "properties": {"x": {"$ref": "#/$defs/Missing"}},
+            },
             output_schema={},
         )
         registry = StubRegistry([simple_descriptor, bad_descriptor])
@@ -274,11 +277,11 @@ class TestBuildToolStreamingMeta:
     def test_build_tool_with_requires_approval_meta(
         self, factory: MCPServerFactory, destructive_descriptor: ModuleDescriptor
     ) -> None:
-        """build_tool includes _meta.requires_approval when annotation is set."""
+        """build_tool includes _meta.requiresApproval when annotation is set."""
         tool = factory.build_tool(destructive_descriptor)
         # destructive_descriptor has requires_approval=True
         assert tool.meta is not None
-        assert tool.meta.get("requires_approval") is True
+        assert tool.meta.get("requiresApproval") is True
 
     def test_build_tool_with_streaming_meta(self, factory: MCPServerFactory) -> None:
         """build_tool includes _meta.streaming when annotation has streaming=True."""
@@ -328,7 +331,7 @@ class TestBuildToolStreamingMeta:
 
         tool = factory.build_tool(descriptor)
         assert tool.meta is not None
-        assert tool.meta.get("requires_approval") is True
+        assert tool.meta.get("requiresApproval") is True
         assert tool.meta.get("streaming") is True
 
     def test_build_tool_no_meta_when_no_special_annotations(
@@ -338,6 +341,146 @@ class TestBuildToolStreamingMeta:
         tool = factory.build_tool(simple_descriptor)
         # simple_descriptor has idempotent=True but NOT requires_approval or streaming
         assert tool.meta is None
+
+
+class TestRegisterResourceHandlers:
+    """Tests for MCPServerFactory.register_resource_handlers."""
+
+    @pytest.fixture
+    def factory(self) -> MCPServerFactory:
+        return MCPServerFactory()
+
+    def test_registers_resource_handlers_on_server(self, factory: MCPServerFactory) -> None:
+        """register_resource_handlers registers list_resources and read_resource handlers."""
+        registry = StubRegistry(
+            [
+                ModuleDescriptor(
+                    module_id="mod.documented",
+                    description="A documented module",
+                    input_schema={"type": "object", "properties": {}},
+                    output_schema={},
+                    documentation="Some docs",
+                )
+            ]
+        )
+        server = factory.create_server()
+        factory.register_resource_handlers(server, registry)
+
+        assert mcp_types.ListResourcesRequest in server.request_handlers
+        assert mcp_types.ReadResourceRequest in server.request_handlers
+
+    async def test_resource_list_includes_documented_modules(self, factory: MCPServerFactory) -> None:
+        """Modules with non-null documentation appear in resource list."""
+        registry = StubRegistry(
+            [
+                ModuleDescriptor(
+                    module_id="mod.documented",
+                    description="A documented module",
+                    input_schema={"type": "object", "properties": {}},
+                    output_schema={},
+                    documentation="Some docs",
+                )
+            ]
+        )
+        server = factory.create_server()
+        factory.register_resource_handlers(server, registry)
+
+        handler = server.request_handlers[mcp_types.ListResourcesRequest]
+        server_result = await handler(None)
+        result = server_result.root
+        assert len(result.resources) == 1
+        resource = result.resources[0]
+        assert str(resource.uri) == "docs://mod.documented"
+        assert resource.name == "mod.documented documentation"
+        assert resource.mimeType == "text/plain"
+
+    async def test_resource_list_excludes_null_documentation(self, factory: MCPServerFactory) -> None:
+        """Modules with documentation=None are excluded from resource list."""
+        registry = StubRegistry(
+            [
+                ModuleDescriptor(
+                    module_id="mod.nodocs",
+                    description="No docs module",
+                    input_schema={"type": "object", "properties": {}},
+                    output_schema={},
+                    documentation=None,
+                )
+            ]
+        )
+        server = factory.create_server()
+        factory.register_resource_handlers(server, registry)
+
+        handler = server.request_handlers[mcp_types.ListResourcesRequest]
+        server_result = await handler(None)
+        result = server_result.root
+        assert len(result.resources) == 0
+
+    async def test_resource_list_excludes_modules_without_documentation(self, factory: MCPServerFactory) -> None:
+        """Modules without a documentation field are excluded from resource list."""
+        registry = StubRegistry(
+            [
+                ModuleDescriptor(
+                    module_id="mod.plain",
+                    description="Plain module",
+                    input_schema={"type": "object", "properties": {}},
+                    output_schema={},
+                )
+            ]
+        )
+        server = factory.create_server()
+        factory.register_resource_handlers(server, registry)
+
+        handler = server.request_handlers[mcp_types.ListResourcesRequest]
+        server_result = await handler(None)
+        result = server_result.root
+        assert len(result.resources) == 0
+
+    async def test_resource_read_returns_documentation_text(self, factory: MCPServerFactory) -> None:
+        """Reading a valid docs:// URI returns the documentation text."""
+        from pydantic import AnyUrl
+
+        registry = StubRegistry(
+            [
+                ModuleDescriptor(
+                    module_id="mod.documented",
+                    description="A documented module",
+                    input_schema={"type": "object", "properties": {}},
+                    output_schema={},
+                    documentation="Some docs about this module",
+                )
+            ]
+        )
+        server = factory.create_server()
+        factory.register_resource_handlers(server, registry)
+
+        handler = server.request_handlers[mcp_types.ReadResourceRequest]
+        request = mcp_types.ReadResourceRequest(
+            params=mcp_types.ReadResourceRequestParams(
+                uri=AnyUrl("docs://mod.documented"),
+            ),
+        )
+        server_result = await handler(request)
+        result = server_result.root
+        assert len(result.contents) == 1
+        assert result.contents[0].text == "Some docs about this module"
+        assert result.contents[0].mimeType == "text/plain"
+
+    async def test_resource_read_unknown_module_raises_error(self, factory: MCPServerFactory) -> None:
+        """Reading a docs:// URI for an unknown module raises an error."""
+        from pydantic import AnyUrl
+
+        registry = StubRegistry([])
+        server = factory.create_server()
+        factory.register_resource_handlers(server, registry)
+
+        handler = server.request_handlers[mcp_types.ReadResourceRequest]
+        request = mcp_types.ReadResourceRequest(
+            params=mcp_types.ReadResourceRequestParams(
+                uri=AnyUrl("docs://mod.unknown"),
+            ),
+        )
+        with pytest.raises(ValueError, match="Resource not found"):
+            await handler(request)
 
 
 class TestBuildInitOptions:

@@ -123,9 +123,10 @@ class TestBuildHealthResponse:
         assert response["module_count"] == 0
 
     def test_health_response_with_module_count(self) -> None:
-        """Health response includes provided module count."""
+        """Health response includes stored module count via set_module_count."""
         tm = TransportManager()
-        response = tm._build_health_response(module_count=5)
+        tm.set_module_count(5)
+        response = tm._build_health_response()
         assert response["module_count"] == 5
 
     def test_health_response_uptime_increases(self) -> None:
@@ -133,6 +134,13 @@ class TestBuildHealthResponse:
         tm = TransportManager()
         response = tm._build_health_response()
         assert response["uptime_seconds"] >= 0
+
+    def test_set_module_count(self) -> None:
+        """set_module_count updates the stored module count."""
+        tm = TransportManager()
+        assert tm._build_health_response()["module_count"] == 0
+        tm.set_module_count(10)
+        assert tm._build_health_response()["module_count"] == 10
 
 
 class TestTransportValidationIntegration:

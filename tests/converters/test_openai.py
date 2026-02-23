@@ -265,14 +265,20 @@ class TestConvertRegistry:
                 ModuleDescriptor(
                     module_id="mod.a",
                     description="Module A",
-                    input_schema={"type": "object", "properties": {"x": {"type": "string"}}},
+                    input_schema={
+                        "type": "object",
+                        "properties": {"x": {"type": "string"}},
+                    },
                     output_schema={},
                     tags=["core"],
                 ),
                 ModuleDescriptor(
                     module_id="mod.b",
                     description="Module B",
-                    input_schema={"type": "object", "properties": {"y": {"type": "integer"}}},
+                    input_schema={
+                        "type": "object",
+                        "properties": {"y": {"type": "integer"}},
+                    },
                     output_schema={},
                     tags=["core"],
                 ),
@@ -465,7 +471,11 @@ class TestStrictModeEdgeCases:
 
         result = converter.convert_descriptor(descriptor, strict=True)
         params = result["function"]["parameters"]
-        assert params["properties"]["opt_field"]["type"] == ["string", "integer", "null"]
+        assert params["properties"]["opt_field"]["type"] == [
+            "string",
+            "integer",
+            "null",
+        ]
 
     def test_strict_mode_array_items_recursion(self, converter):
         """Strict mode recurses into array items."""
@@ -497,7 +507,10 @@ class TestStrictModeEdgeCases:
         item_schema = params["properties"]["items"]["items"]
         # Items should have strict mode applied too
         assert item_schema["additionalProperties"] is False
-        assert item_schema["required"] == ["name", "value"]  # sorted by to_strict_schema
+        assert item_schema["required"] == [
+            "name",
+            "value",
+        ]  # sorted by to_strict_schema
         # Default should be removed
         assert "default" not in item_schema["properties"]["value"]
 

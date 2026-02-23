@@ -4,6 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+DEFAULT_ANNOTATIONS = {
+    "readonly": False,
+    "destructive": False,
+    "idempotent": False,
+    "requires_approval": False,
+    "open_world": True,
+}
+
 
 class AnnotationMapper:
     """Maps apcore ModuleAnnotations to MCP ToolAnnotations format.
@@ -63,14 +71,21 @@ class AnnotationMapper:
         if annotations is None:
             return ""
 
-        # Build annotation key-value pairs
-        parts = [
-            f"readonly={str(annotations.readonly).lower()}",
-            f"destructive={str(annotations.destructive).lower()}",
-            f"idempotent={str(annotations.idempotent).lower()}",
-            f"requires_approval={str(annotations.requires_approval).lower()}",
-            f"open_world={str(annotations.open_world).lower()}",
-        ]
+        # Build annotation key-value pairs only for non-default values
+        parts = []
+        if annotations.readonly != DEFAULT_ANNOTATIONS["readonly"]:
+            parts.append(f"readonly={str(annotations.readonly).lower()}")
+        if annotations.destructive != DEFAULT_ANNOTATIONS["destructive"]:
+            parts.append(f"destructive={str(annotations.destructive).lower()}")
+        if annotations.idempotent != DEFAULT_ANNOTATIONS["idempotent"]:
+            parts.append(f"idempotent={str(annotations.idempotent).lower()}")
+        if annotations.requires_approval != DEFAULT_ANNOTATIONS["requires_approval"]:
+            parts.append(f"requires_approval={str(annotations.requires_approval).lower()}")
+        if annotations.open_world != DEFAULT_ANNOTATIONS["open_world"]:
+            parts.append(f"open_world={str(annotations.open_world).lower()}")
+
+        if not parts:
+            return ""
 
         return f"\n\n[Annotations: {', '.join(parts)}]"
 

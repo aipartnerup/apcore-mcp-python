@@ -197,16 +197,40 @@ Exit codes: `0` normal, `1` invalid arguments, `2` startup failure.
 from apcore_mcp import serve
 
 serve(
-    registry_or_executor,       # Registry or Executor
-    transport="stdio",          # "stdio" | "streamable-http" | "sse"
-    host="127.0.0.1",          # host for HTTP transports
-    port=8000,                  # port for HTTP transports
-    name="apcore-mcp",         # server name
-    version=None,              # defaults to package version
+    registry_or_executor,        # Registry or Executor
+    transport="stdio",           # "stdio" | "streamable-http" | "sse"
+    host="127.0.0.1",           # host for HTTP transports
+    port=8000,                   # port for HTTP transports
+    name="apcore-mcp",          # server name
+    version=None,                # defaults to package version
+    on_startup=None,             # callback before transport starts
+    on_shutdown=None,            # callback after transport completes
+    tags=None,                   # filter modules by tags
+    prefix=None,                 # filter modules by ID prefix
+    log_level=None,              # logging level ("DEBUG", "INFO", etc.)
+    validate_inputs=False,       # validate inputs against schemas
+    metrics_collector=None,      # MetricsCollector for /metrics endpoint
 )
 ```
 
 Accepts either a `Registry` or `Executor`. When a `Registry` is passed, an `Executor` is created automatically.
+
+### `/metrics` Prometheus Endpoint
+
+When `metrics_collector` is provided to `serve()`, a `/metrics` HTTP endpoint is exposed that returns metrics in Prometheus text exposition format.
+
+- **Available on HTTP-based transports only** (`streamable-http`, `sse`). Not available with `stdio` transport.
+- **Returns Prometheus text format** with Content-Type `text/plain; version=0.0.4; charset=utf-8`.
+- **Returns 404** when no `metrics_collector` is configured.
+
+```python
+from apcore.observability import MetricsCollector
+from apcore_mcp import serve
+
+collector = MetricsCollector()
+serve(registry, transport="streamable-http", metrics_collector=collector)
+# GET http://127.0.0.1:8000/metrics -> Prometheus text format
+```
 
 ### `to_openai_tools()`
 

@@ -172,7 +172,10 @@ class TestOnRegister:
         bad_descriptor = ModuleDescriptor(
             module_id="bad.module",
             description="will fail",
-            input_schema={"$defs": {}, "properties": {"x": {"$ref": "#/$defs/Missing"}}},
+            input_schema={
+                "$defs": {},
+                "properties": {"x": {"$ref": "#/$defs/Missing"}},
+            },
             output_schema={},
         )
         registry.add_definition(bad_descriptor)

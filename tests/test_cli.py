@@ -94,7 +94,10 @@ class TestAllOptions:
     def test_all_options_forwarded(self, tmp_path):
         """All explicit options are forwarded to serve()."""
         patches = _make_patches()
-        with patches["registry_patch"] as mock_reg, patches["serve_patch"] as mock_serve:
+        with (
+            patches["registry_patch"] as mock_reg,
+            patches["serve_patch"] as mock_serve,
+        ):
             _run_main(
                 "--extensions-dir",
                 str(tmp_path),
@@ -272,7 +275,11 @@ class TestLogLevel:
     def test_log_level_set(self, tmp_path):
         """--log-level DEBUG configures the root logger."""
         patches = _make_patches()
-        with patches["registry_patch"], patches["serve_patch"], patch("apcore_mcp.__main__.logging") as mock_logging:
+        with (
+            patches["registry_patch"],
+            patches["serve_patch"],
+            patch("apcore_mcp.__main__.logging") as mock_logging,
+        ):
             _run_main("--extensions-dir", str(tmp_path), "--log-level", "DEBUG")
             mock_logging.basicConfig.assert_called_once()
             call_kwargs = mock_logging.basicConfig.call_args
@@ -282,7 +289,11 @@ class TestLogLevel:
     def test_default_log_level_is_info(self, tmp_path):
         """Default log level is INFO."""
         patches = _make_patches()
-        with patches["registry_patch"], patches["serve_patch"], patch("apcore_mcp.__main__.logging") as mock_logging:
+        with (
+            patches["registry_patch"],
+            patches["serve_patch"],
+            patch("apcore_mcp.__main__.logging") as mock_logging,
+        ):
             _run_main("--extensions-dir", str(tmp_path))
             call_kwargs = mock_logging.basicConfig.call_args
             assert call_kwargs.kwargs.get("level") == mock_logging.INFO
@@ -332,7 +343,10 @@ class TestFullWiring:
         mock_instance.discover.return_value = 0
         mock_registry_cls.return_value = mock_instance
 
-        with patch("apcore_mcp.__main__.Registry", mock_registry_cls), patch("apcore_mcp.__main__.serve") as mock_serve:
+        with (
+            patch("apcore_mcp.__main__.Registry", mock_registry_cls),
+            patch("apcore_mcp.__main__.serve") as mock_serve,
+        ):
             _run_main("--extensions-dir", str(tmp_path))
 
             # serve() should still be called even with 0 modules

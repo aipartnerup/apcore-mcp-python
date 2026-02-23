@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from collections.abc import Callable, Coroutine
@@ -39,6 +40,23 @@ class ExecutionRouter:
         self._executor = executor
         self._error_mapper = ErrorMapper()
         self._validate_inputs = validate_inputs
+
+        # Cache whether executor methods accept a context parameter,
+        # so we avoid a broad TypeError catch on every call.
+        self._call_async_accepts_context = self._check_accepts_context(executor.call_async)
+        self._stream_accepts_context = self._check_accepts_context(getattr(executor, "stream", None))
+
+    @staticmethod
+    def _check_accepts_context(method: Any) -> bool:
+        """Return True if *method* accepts at least 3 positional parameters
+        (excluding ``self``), i.e. (tool_name, arguments, context)."""
+        if method is None:
+            return False
+        try:
+            sig = inspect.signature(method)
+            return len(sig.parameters) >= 3
+        except (ValueError, TypeError):
+            return True  # assume yes if we cannot inspect
 
     async def handle_call(
         self,
@@ -132,7 +150,10 @@ class ExecutionRouter:
                     detail = "; ".join(
                         f"{e.get('field', '?')}: {e.get('message', 'invalid')}" for e in validation.errors
                     )
-                    return ([{"type": "text", "text": f"Validation failed: {detail}"}], True)
+                    return (
+                        [{"type": "text", "text": f"Validation failed: {detail}"}],
+                        True,
+                    )
             except AttributeError:
                 pass  # executor lacks validate() — skip
             except Exception as error:
@@ -163,18 +184,22 @@ class ExecutionRouter:
     ) -> tuple[list[dict[str, str]], bool]:
         """Non-streaming execution via executor.call_async()."""
         try:
-            try:
+            if self._call_async_accepts_context:
                 result = await self._executor.call_async(tool_name, arguments, context)
-            except TypeError:
-                # Backward compat: executor doesn't accept context arg
+            else:
                 result = await self._executor.call_async(tool_name, arguments)
             json_output = json.dumps(result, default=str)
             content: list[dict[str, str]] = [{"type": "text", "text": json_output}]
             if context is not None:
-                content.append({"type": "text", "text": json.dumps({"_trace_id": context.trace_id})})
+                content.append(
+                    {
+                        "type": "text",
+                        "text": json.dumps({"_trace_id": context.trace_id}),
+                    }
+                )
             return (content, False)
         except Exception as error:
-            logger.debug("handle_call error for %s: %s", tool_name, error)
+            logger.error("handle_call error for %s: %s", tool_name, error)
             error_info = self._error_mapper.to_mcp_error(error)
             return ([{"type": "text", "text": error_info["message"]}], True)
 
@@ -196,10 +221,9 @@ class ExecutionRouter:
         chunk_index = 0
 
         try:
-            try:
+            if self._stream_accepts_context:
                 stream_iter = self._executor.stream(tool_name, arguments, context)
-            except TypeError:
-                # Backward compat: executor doesn't accept context arg
+            else:
                 stream_iter = self._executor.stream(tool_name, arguments)
 
             async for chunk in stream_iter:
@@ -222,9 +246,14 @@ class ExecutionRouter:
             json_output = json.dumps(accumulated, default=str)
             content: list[dict[str, str]] = [{"type": "text", "text": json_output}]
             if context is not None:
-                content.append({"type": "text", "text": json.dumps({"_trace_id": context.trace_id})})
+                content.append(
+                    {
+                        "type": "text",
+                        "text": json.dumps({"_trace_id": context.trace_id}),
+                    }
+                )
             return (content, False)
         except Exception as error:
-            logger.debug("handle_call stream error for %s: %s", tool_name, error)
+            logger.error("handle_call stream error for %s: %s", tool_name, error)
             error_info = self._error_mapper.to_mcp_error(error)
             return ([{"type": "text", "text": error_info["message"]}], True)

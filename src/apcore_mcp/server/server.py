@@ -5,6 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from apcore_mcp.server.transport import MetricsExporter
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +33,20 @@ class MCPServer:
         name: str = "apcore-mcp",
         version: str | None = None,
         validate_inputs: bool = False,
+        metrics_collector: MetricsExporter | None = None,
+        tags: list[str] | None = None,
+        prefix: str | None = None,
     ) -> None:
         self._registry_or_executor = registry_or_executor
-        self._transport = transport
+        self._transport = transport.lower()
         self._host = host
         self._port = port
         self._name = name
         self._version = version
         self._validate_inputs = validate_inputs
+        self._metrics_collector = metrics_collector
+        self._tags = tags
+        self._prefix = prefix
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._started = threading.Event()
@@ -70,8 +80,11 @@ class MCPServer:
 
     def _run(self) -> None:
         """Internal: run the server event loop."""
-        from apcore_mcp.__init__ import __version__
+        from importlib.metadata import version as _pkg_version
+
         from apcore_mcp._utils import resolve_executor, resolve_registry
+
+        __version__ = _pkg_version("apcore-mcp")
         from apcore_mcp.server.factory import MCPServerFactory
         from apcore_mcp.server.router import ExecutionRouter
         from apcore_mcp.server.transport import TransportManager
@@ -82,16 +95,18 @@ class MCPServer:
 
         factory = MCPServerFactory()
         server = factory.create_server(name=self._name, version=version)
-        tools = factory.build_tools(registry)
+        tools = factory.build_tools(registry, tags=self._tags, prefix=self._prefix)
         router = ExecutionRouter(executor, validate_inputs=self._validate_inputs)
         factory.register_handlers(server, tools, router)
+        factory.register_resource_handlers(server, registry)
         init_options = factory.build_init_options(
             server,
             name=self._name,
             version=version,
         )
 
-        transport_manager = TransportManager()
+        transport_manager = TransportManager(metrics_collector=self._metrics_collector)
+        transport_manager.set_module_count(len(tools))
 
         self._loop = asyncio.new_event_loop()
         self._started.set()

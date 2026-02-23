@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time as _time
 import uuid
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import anyio
 import uvicorn
@@ -21,19 +21,46 @@ from starlette.routing import Mount, Route
 logger = logging.getLogger(__name__)
 
 
+@runtime_checkable
+class MetricsExporter(Protocol):
+    """Protocol for metrics collectors that can export Prometheus text format."""
+
+    def export_prometheus(self) -> str: ...
+
+
 class TransportManager:
     """Manages MCP server transport lifecycle."""
 
-    def __init__(self) -> None:
+    def __init__(self, metrics_collector: MetricsExporter | None = None) -> None:
         self._start_time = _time.monotonic()
+        self._metrics_collector: MetricsExporter | None = metrics_collector
+        self._module_count: int = 0
 
-    def _build_health_response(self, module_count: int = 0) -> dict[str, object]:
+    def set_module_count(self, count: int) -> None:
+        """Set the number of registered modules for health reporting."""
+        self._module_count = count
+
+    def _build_health_response(self) -> dict[str, object]:
         """Build health check response."""
         return {
             "status": "ok",
             "uptime_seconds": round(_time.monotonic() - self._start_time, 1),
-            "module_count": module_count,
+            "module_count": self._module_count,
         }
+
+    def _build_metrics_response(self) -> Response:
+        """Build Prometheus metrics response.
+
+        Returns 200 with Prometheus text if a metrics collector is configured,
+        or 404 if no collector is available.
+        """
+        if self._metrics_collector is None:
+            return Response(status_code=404)
+        body = self._metrics_collector.export_prometheus()
+        return Response(
+            content=body,
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     async def run_stdio(
         self,
@@ -65,9 +92,13 @@ class TransportManager:
             async def _health(request: Any) -> JSONResponse:
                 return JSONResponse(self._build_health_response())
 
+            async def _metrics(request: Any) -> Response:
+                return self._build_metrics_response()
+
             app = Starlette(
                 routes=[
                     Route("/health", endpoint=_health, methods=["GET"]),
+                    Route("/metrics", endpoint=_metrics, methods=["GET"]),
                     Mount("/mcp", app=transport.handle_request),
                 ],
             )
@@ -105,9 +136,13 @@ class TransportManager:
         async def _health(request: Any) -> JSONResponse:
             return JSONResponse(self._build_health_response())
 
+        async def _metrics(request: Any) -> Response:
+            return self._build_metrics_response()
+
         app = Starlette(
             routes=[
                 Route("/health", endpoint=_health, methods=["GET"]),
+                Route("/metrics", endpoint=_metrics, methods=["GET"]),
                 Route("/sse", endpoint=handle_sse, methods=["GET"]),
                 Mount("/messages/", app=sse_transport.handle_post_message),
             ],

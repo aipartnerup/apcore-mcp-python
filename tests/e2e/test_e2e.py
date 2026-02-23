@@ -66,7 +66,10 @@ class TestMultiModuleMixedAnnotations:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "source": {"type": "string", "description": "Data source identifier"},
+                    "source": {
+                        "type": "string",
+                        "description": "Data source identifier",
+                    },
                     "limit": {"type": "integer", "description": "Max items to return"},
                 },
                 "required": ["source"],
@@ -142,7 +145,11 @@ class TestMultiModuleMixedAnnotations:
 
     def test_tool_names(self, tool_by_name: dict[str, mcp_types.Tool]) -> None:
         """Tool names match module IDs."""
-        assert set(tool_by_name.keys()) == {"reader.get", "writer.delete", "worker.process"}
+        assert set(tool_by_name.keys()) == {
+            "reader.get",
+            "writer.delete",
+            "worker.process",
+        }
 
     # -- reader.get annotations --
 

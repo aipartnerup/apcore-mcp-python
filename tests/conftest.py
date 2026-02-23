@@ -69,7 +69,10 @@ def simple_descriptor() -> ModuleDescriptor:
             "properties": {
                 "width": {"type": "integer", "description": "Target width in pixels"},
                 "height": {"type": "integer", "description": "Target height in pixels"},
-                "image_path": {"type": "string", "description": "Path to the image file"},
+                "image_path": {
+                    "type": "string",
+                    "description": "Path to the image file",
+                },
             },
             "required": ["width", "height", "image_path"],
         },

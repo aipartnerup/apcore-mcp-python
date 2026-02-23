@@ -25,7 +25,10 @@ class TestSchemaConverter:
             "properties": {
                 "width": {"type": "integer", "description": "Target width in pixels"},
                 "height": {"type": "integer", "description": "Target height in pixels"},
-                "image_path": {"type": "string", "description": "Path to the image file"},
+                "image_path": {
+                    "type": "string",
+                    "description": "Path to the image file",
+                },
             },
             "required": ["width", "height", "image_path"],
         }
@@ -256,7 +259,7 @@ class TestSchemaConverter:
             converter.convert_input_schema(descriptor)
 
     def test_missing_ref_definition_raises(self, converter):
-        """Test that a $ref to a missing definition raises ValueError."""
+        """Test that a $ref to a missing definition raises KeyError."""
         from tests.conftest import ModuleDescriptor
 
         descriptor = ModuleDescriptor(
@@ -272,7 +275,7 @@ class TestSchemaConverter:
             output_schema={},
         )
 
-        with pytest.raises(ValueError, match="Definition not found"):
+        with pytest.raises(KeyError, match="Definition not found"):
             converter.convert_input_schema(descriptor)
 
     def test_schema_with_list_items(self, converter):

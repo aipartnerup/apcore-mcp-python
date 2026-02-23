@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+_MAX_REF_DEPTH = 32
+
 
 class SchemaConverter:
     """Converts apcore ModuleDescriptor schemas to MCP-compatible schemas.
@@ -73,6 +75,7 @@ class SchemaConverter:
         schema: dict[str, Any],
         defs: dict[str, Any],
         _seen: set[str] | None = None,
+        _depth: int = 0,
     ) -> dict[str, Any]:
         """Recursively inline all $ref references, removing $defs.
 
@@ -81,13 +84,17 @@ class SchemaConverter:
             defs: Dictionary of definitions from $defs
             _seen: Internal set tracking visited $ref paths to prevent
                 infinite recursion on circular references.
+            _depth: Current recursion depth for safety limit.
 
         Returns:
             Schema with all $refs replaced by their definitions
 
         Raises:
-            ValueError: If a circular $ref is detected.
+            ValueError: If a circular $ref is detected or depth exceeds limit.
         """
+        if _depth > _MAX_REF_DEPTH:
+            raise ValueError(f"$ref resolution exceeded maximum depth of {_MAX_REF_DEPTH}")
+
         if _seen is None:
             _seen = set()
 
@@ -100,7 +107,7 @@ class SchemaConverter:
                 _seen = _seen | {ref_path}
                 resolved = self._resolve_ref(ref_path, defs)
                 # Recursively inline refs in the resolved schema
-                return self._inline_refs(resolved, defs, _seen)
+                return self._inline_refs(resolved, defs, _seen, _depth + 1)
 
             # Otherwise, recursively process all values
             result = {}
@@ -108,11 +115,11 @@ class SchemaConverter:
                 if key == "$defs":
                     # Skip $defs, we'll remove it later
                     continue
-                result[key] = self._inline_refs(value, defs, _seen)
+                result[key] = self._inline_refs(value, defs, _seen, _depth + 1)
             return result
         elif isinstance(schema, list):
             # Recursively process list items
-            return [self._inline_refs(item, defs, _seen) for item in schema]
+            return [self._inline_refs(item, defs, _seen, _depth + 1) for item in schema]
         else:
             # Primitive value, return as-is
             return schema
@@ -139,7 +146,7 @@ class SchemaConverter:
         def_name = ref_path[8:]  # Remove "#/$defs/"
 
         if def_name not in defs:
-            raise ValueError(f"Definition not found: {def_name}")
+            raise KeyError(f"Definition not found: {def_name}")
 
         # Return a deep copy to avoid circular reference issues
         return copy.deepcopy(defs[def_name])

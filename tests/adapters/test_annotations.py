@@ -125,7 +125,7 @@ class TestAnnotationMapper:
         assert mapper.has_requires_approval(None) is False
 
     def test_description_suffix_with_annotations(self, mapper: AnnotationMapper) -> None:
-        """Test description suffix embeds annotations in readable format."""
+        """Test description suffix embeds only non-default annotations."""
         annotations = ModuleAnnotations(
             destructive=True,
             readonly=False,
@@ -139,10 +139,11 @@ class TestAnnotationMapper:
         assert result.startswith("\n\n[Annotations: ")
         assert result.endswith("]")
         assert "destructive=true" in result.lower()
-        assert "readonly=false" in result.lower()
         assert "idempotent=true" in result.lower()
         assert "requires_approval=true" in result.lower()
         assert "open_world=false" in result.lower()
+        # readonly=False is the default, so it should NOT appear
+        assert "readonly" not in result.lower()
 
     def test_description_suffix_empty(self, mapper: AnnotationMapper) -> None:
         """Test description suffix returns empty string for None annotations."""
@@ -150,14 +151,9 @@ class TestAnnotationMapper:
         assert result == ""
 
     def test_description_suffix_defaults(self, mapper: AnnotationMapper) -> None:
-        """Test description suffix with default annotations shows all fields."""
+        """Test description suffix with all-default annotations returns empty string."""
         annotations = ModuleAnnotations()
         result = mapper.to_description_suffix(annotations)
 
-        # Default annotations should still produce a suffix
-        assert result.startswith("\n\n[Annotations: ")
-        assert "readonly=false" in result.lower()
-        assert "destructive=false" in result.lower()
-        assert "idempotent=false" in result.lower()
-        assert "requires_approval=false" in result.lower()
-        assert "open_world=true" in result.lower()
+        # All-default annotations should return empty string
+        assert result == ""

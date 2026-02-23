@@ -9,7 +9,9 @@ from apcore.schema.exporter import SchemaExporter
 from apcore.schema.types import SchemaDefinition
 from mcp import types as mcp_types
 from mcp.server.lowlevel import NotificationOptions, Server
+from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.models import InitializationOptions
+from pydantic import AnyUrl
 
 from apcore_mcp.adapters.annotations import AnnotationMapper
 from apcore_mcp.adapters.schema import SchemaConverter
@@ -56,7 +58,9 @@ class MCPServerFactory:
         """
         input_schema = self._schema_converter.convert_input_schema(descriptor)
 
-        # Use SchemaExporter for canonical MCP annotation mapping
+        # NOTE: Python uses SchemaExporter.export_mcp() for annotation mapping,
+        # while TypeScript uses AnnotationMapper.toMcpAnnotations() directly.
+        # Both produce identical output. If annotation logic changes, update both paths.
         schema_def = SchemaDefinition(
             module_id=descriptor.module_id,
             description=descriptor.description,
@@ -77,7 +81,7 @@ class MCPServerFactory:
         # Build optional _meta with requires_approval and streaming hints
         meta: dict[str, object] | None = None
         if self._annotation_mapper.has_requires_approval(descriptor.annotations):
-            meta = {"requires_approval": True}
+            meta = {"requiresApproval": True}
         if hints.get("streaming"):
             if meta is None:
                 meta = {}
@@ -175,8 +179,62 @@ class MCPServerFactory:
 
             content, is_error = await router.handle_call(name, arguments or {}, extra=extra)
             if is_error:
-                raise Exception(content[0]["text"])
+                return [
+                    mcp_types.TextContent(type="text", text=item["text"])
+                    for item in content
+                    if item.get("type") == "text"
+                ]
             return content
+
+    def register_resource_handlers(
+        self,
+        server: Server,
+        registry: Any,
+    ) -> None:
+        """Register list_resources and read_resource handlers for modules with documentation.
+
+        Iterates over registry.list(), gets each definition, and filters for
+        descriptors that have a non-null ``documentation`` field. Registers:
+        - list_resources: returns Resource objects with URI ``docs://{module_id}``
+        - read_resource: returns documentation text for the requested module
+
+        Args:
+            server: The MCP Server to register handlers on.
+            registry: An apcore Registry with list() and get_definition() methods.
+        """
+        # Build a map of module_id -> documentation for modules with docs
+        docs_map: dict[str, str] = {}
+        for module_id in registry.list():
+            try:
+                descriptor = registry.get_definition(module_id)
+                if descriptor is not None and getattr(descriptor, "documentation", None):
+                    docs_map[module_id] = descriptor.documentation
+            except Exception as e:
+                logger.warning("Failed to get definition for %s: %s", module_id, e)
+
+        @server.list_resources()
+        async def handle_list_resources() -> list[mcp_types.Resource]:
+            resources: list[mcp_types.Resource] = []
+            for mid in docs_map:
+                resources.append(
+                    mcp_types.Resource(
+                        uri=AnyUrl(f"docs://{mid}"),
+                        name=f"{mid} documentation",
+                        mimeType="text/plain",
+                    )
+                )
+            return resources
+
+        @server.read_resource()
+        async def handle_read_resource(uri: Any) -> list[ReadResourceContents]:
+            uri_str = str(uri)
+            prefix = "docs://"
+            if not uri_str.startswith(prefix):
+                raise ValueError(f"Unsupported URI scheme: {uri_str}")
+            module_id = uri_str[len(prefix) :]
+            if module_id not in docs_map:
+                raise ValueError(f"Resource not found: {uri_str}")
+            return [ReadResourceContents(content=docs_map[module_id], mime_type="text/plain")]
 
     def build_init_options(
         self,

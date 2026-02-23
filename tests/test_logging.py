@@ -229,15 +229,15 @@ class TestRouterLogging:
 
 
 # ===========================================================================
-# Test 5: Router logs errors at DEBUG level
+# Test 5: Router logs errors at ERROR level
 # ===========================================================================
 
 
 class TestRouterErrorLogging:
-    """Verify ExecutionRouter logs errors at DEBUG level."""
+    """Verify ExecutionRouter logs errors at ERROR level."""
 
     async def test_router_logs_error(self, caplog):
-        """Router logs 'handle_call error' at DEBUG level when executor raises."""
+        """Router logs 'handle_call error' at ERROR level when executor raises."""
         from apcore_mcp.server.router import ExecutionRouter
 
         mock_executor = MagicMock()
@@ -251,7 +251,7 @@ class TestRouterErrorLogging:
         error_records = [r for r in caplog.records if "handle_call error" in r.message]
         assert len(error_records) == 1
         assert "bad.module" in error_records[0].message
-        assert error_records[0].levelno == logging.DEBUG
+        assert error_records[0].levelno == logging.ERROR
 
 
 # ===========================================================================

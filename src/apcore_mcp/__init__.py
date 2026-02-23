@@ -18,13 +18,14 @@ from apcore_mcp.server.factory import MCPServerFactory
 from apcore_mcp.server.listener import RegistryListener
 from apcore_mcp.server.router import ExecutionRouter
 from apcore_mcp.server.server import MCPServer
-from apcore_mcp.server.transport import TransportManager
+from apcore_mcp.server.transport import MetricsExporter, TransportManager
 
 __all__ = [
     # Public API
     "serve",
     "to_openai_tools",
     # Server building blocks
+    "MetricsExporter",
     "MCPServer",
     "MCPServerFactory",
     "ExecutionRouter",
@@ -48,9 +49,9 @@ __all__ = [
     "MCP_ELICIT_KEY",
 ]
 
-logger = logging.getLogger(__name__)
+__version__ = "0.4.0"
 
-__version__ = "0.3.0"
+logger = logging.getLogger(__name__)
 
 
 def serve(
@@ -63,8 +64,12 @@ def serve(
     version: str | None = None,
     on_startup: Callable[[], None] | None = None,
     on_shutdown: Callable[[], None] | None = None,
+    tags: list[str] | None = None,
+    prefix: str | None = None,
+    log_level: str | None = None,
     dynamic: bool = False,
     validate_inputs: bool = False,
+    metrics_collector: MetricsExporter | None = None,
 ) -> None:
     """Launch an MCP Server that exposes all apcore modules as tools.
 
@@ -77,10 +82,32 @@ def serve(
         version: MCP server version. Defaults to apcore-mcp version.
         on_startup: Optional callback invoked after setup, before transport starts.
         on_shutdown: Optional callback invoked after the transport completes.
+        tags: Filter modules by tags. Only modules with ALL specified tags are exposed.
+        prefix: Filter modules by ID prefix.
+        log_level: Set the log level for the apcore_mcp logger (e.g. "DEBUG", "INFO").
         dynamic: Reserved for future dynamic tool registration support.
         validate_inputs: Validate tool inputs against schemas before execution.
+        metrics_collector: Optional MetricsCollector for Prometheus /metrics endpoint.
     """
+    if not name:
+        raise ValueError("name must not be empty")
+    if len(name) > 255:
+        raise ValueError(f"name exceeds maximum length of 255: {len(name)}")
+    if tags is not None:
+        for tag in tags:
+            if not tag:
+                raise ValueError("Tag values must not be empty")
+    if prefix is not None and not prefix:
+        raise ValueError("prefix must not be empty")
+    if log_level is not None:
+        valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        if log_level.upper() not in valid_levels:
+            raise ValueError(f"Unknown log level: {log_level!r}. Valid: {sorted(valid_levels)}")
+
     version = version or __version__
+
+    if log_level is not None:
+        logging.getLogger("apcore_mcp").setLevel(getattr(logging, log_level.upper()))
 
     registry = resolve_registry(registry_or_executor)
     executor = resolve_executor(registry_or_executor)
@@ -88,9 +115,10 @@ def serve(
     # Build MCP server components
     factory = MCPServerFactory()
     server = factory.create_server(name=name, version=version)
-    tools = factory.build_tools(registry)
+    tools = factory.build_tools(registry, tags=tags, prefix=prefix)
     router = ExecutionRouter(executor, validate_inputs=validate_inputs)
     factory.register_handlers(server, tools, router)
+    factory.register_resource_handlers(server, registry)
     init_options = factory.build_init_options(server, name=name, version=version)
 
     logger.info(
@@ -102,14 +130,16 @@ def serve(
     )
 
     # Select and run transport
-    transport_manager = TransportManager()
+    transport_lower = transport.lower()
+    transport_manager = TransportManager(metrics_collector=metrics_collector)
+    transport_manager.set_module_count(len(tools))
 
     async def _run() -> None:
-        if transport == "stdio":
+        if transport_lower == "stdio":
             await transport_manager.run_stdio(server, init_options)
-        elif transport == "streamable-http":
+        elif transport_lower == "streamable-http":
             await transport_manager.run_streamable_http(server, init_options, host=host, port=port)
-        elif transport == "sse":
+        elif transport_lower == "sse":
             await transport_manager.run_sse(server, init_options, host=host, port=port)
         else:
             raise ValueError(f"Unknown transport: {transport!r}. Expected 'stdio', 'streamable-http', or 'sse'.")

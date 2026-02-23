@@ -47,9 +47,10 @@ class ErrorMapper:
 
     def _handle_apcore_error(self, error: Exception) -> dict[str, Any]:
         """Handle known apcore errors."""
-        code = error.code
-        message = error.message
-        details = error.details if error.details is not None else None
+        code: str = getattr(error, "code", "UNKNOWN")
+        message: str = getattr(error, "message", str(error))
+        raw_details: Any = getattr(error, "details", None)
+        details: dict[str, Any] | None = raw_details if raw_details is not None else None
 
         # Convert internal errors to generic message
         if code in self._INTERNAL_ERROR_CODES:
@@ -99,4 +100,4 @@ class ErrorMapper:
             msg = err.get("message", "invalid")
             error_lines.append(f"{field}: {msg}")
 
-        return "Schema validation failed: " + "; ".join(error_lines)
+        return "Schema validation failed:\n" + "\n".join(f"  {line}" for line in error_lines)

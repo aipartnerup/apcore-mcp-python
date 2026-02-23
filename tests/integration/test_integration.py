@@ -119,7 +119,10 @@ class TestFullMCPFlow:
                 },
                 "required": ["width"],
             },
-            output_schema={"type": "object", "properties": {"status": {"type": "string"}}},
+            output_schema={
+                "type": "object",
+                "properties": {"status": {"type": "string"}},
+            },
             tags=["image"],
             annotations=ModuleAnnotations(idempotent=True),
         )
