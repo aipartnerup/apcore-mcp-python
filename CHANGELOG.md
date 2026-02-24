@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-02-24
+
+### Added
+
+- **MCP Tool Inspector (F-026)**: Optional browser-based UI for inspecting and testing MCP tools, mounted at `/inspector` when `explorer=True`. Includes 4 HTTP endpoints (`GET /inspector/`, `GET /inspector/tools`, `GET /inspector/tools/<name>`, `POST /inspector/tools/<name>/call`), a self-contained HTML/CSS/JS page with no external dependencies, configurable `inspector_prefix`, and `allow_execute` guard (default `False`). HTTP transports only; silently ignored for stdio.
+- **CLI Inspector flags**: `--explorer`, `--inspector-prefix`, and `--allow-execute` arguments.
+- **Inspector UI: proactive execution status detection**: The Inspector probes execution status on page load via a lightweight POST to `/tools/__probe__/call`, so the "Tool execution is disabled" message appears immediately instead of requiring a user click first.
+- **Inspector UI: URL-safe tool name encoding**: Tool names in fetch URLs are wrapped with `encodeURIComponent()` to prevent malformed URLs when tool names contain special characters.
+- **Inspector UI: error handling on tool detail fetch**: `.catch()` handler on the `loadDetail` fetch chain displays network errors in the detail panel instead of silently swallowing them.
+
+## [0.4.0] - 2026-02-23
+
+### Added
+
+- **Resource handlers**: `MCPServerFactory.register_resource_handlers()` for serving documentation resources via MCP.
+- **CI workflow**: GitHub Actions CI pipeline and `CODEOWNERS` file.
+- **Missing error codes**: Added `MODULE_EXECUTE_ERROR` and `GENERAL_INVALID_INPUT` to error codes constants.
+- **serve() parameter tests**: Comprehensive test suite for `serve()` parameter validation.
+- **Metrics endpoint tests**: Dedicated test suite for Prometheus `/metrics` endpoint.
+
+### Changed
+
+- **Version management**: Consolidated version into `__init__.__version__`, removed `_version.py`.
+
+### Fixed
+
+- **Cache configuration**: Removed unnecessary cache configuration from Python setup step.
+- **Code formatting**: Improved linting checks in CI workflow, factory, router, and test files.
+
+### Refactored
+
+- **Import cleanup**: Removed unused imports across multiple test files; reordered imports in MCPServer for consistency.
+- **Code structure**: General readability and maintainability improvements.
+
 ## [0.3.0] - 2026-02-22
 
 ### Added
@@ -66,6 +100,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Filtering**: `tags` and `prefix` parameters for selective module exposure.
 - **260 tests**: Unit, integration, E2E, performance, and security test suites.
 
+[0.5.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/aipartnerup/apcore-mcp-python/releases/tag/v0.1.0

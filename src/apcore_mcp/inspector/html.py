@@ -117,11 +117,18 @@ _INSPECTOR_HTML = """\
         li.onclick = function() { loadDetail(t.name); };
         toolsEl.appendChild(li);
       });
+      fetch(base + '/tools/__probe__/call', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: '{}'
+      }).then(function(r) {
+        executeEnabled = r.status !== 403;
+      }).catch(function() {});
     })
     .catch(function(e) { loadingEl.textContent = 'Error: ' + e; });
 
   function loadDetail(name) {
-    fetch(base + '/tools/' + name)
+    fetch(base + '/tools/' + encodeURIComponent(name))
       .then(function(r) { return r.json(); })
       .then(function(d) {
         detailEl.className = 'detail active';
@@ -158,6 +165,10 @@ _INSPECTOR_HTML = """\
             'Tool execution is disabled. ' +
             'Launch with --allow-execute to enable.</p>';
         }
+      })
+      .catch(function(e) {
+        detailEl.className = 'detail active';
+        detailEl.innerHTML = '<p class="result-error">Failed to load tool details: ' + esc(e.message) + '</p>';
       });
   }
 
@@ -179,7 +190,7 @@ _INSPECTOR_HTML = """\
     btn.textContent = 'Executing...';
     resultArea.innerHTML = '';
 
-    fetch(base + '/tools/' + name + '/call', {
+    fetch(base + '/tools/' + encodeURIComponent(name) + '/call', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(inputs)

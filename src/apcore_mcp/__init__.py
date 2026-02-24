@@ -49,7 +49,7 @@ __all__ = [
     "MCP_ELICIT_KEY",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 logger = logging.getLogger(__name__)
 
