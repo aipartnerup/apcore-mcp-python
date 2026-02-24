@@ -70,6 +70,9 @@ def serve(
     dynamic: bool = False,
     validate_inputs: bool = False,
     metrics_collector: MetricsExporter | None = None,
+    explorer: bool = False,
+    inspector_prefix: str = "/inspector",
+    allow_execute: bool = False,
 ) -> None:
     """Launch an MCP Server that exposes all apcore modules as tools.
 
@@ -88,6 +91,9 @@ def serve(
         dynamic: Reserved for future dynamic tool registration support.
         validate_inputs: Validate tool inputs against schemas before execution.
         metrics_collector: Optional MetricsCollector for Prometheus /metrics endpoint.
+        explorer: Enable the browser-based Tool Inspector UI (HTTP transports only).
+        inspector_prefix: URL prefix for the inspector (default: "/inspector").
+        allow_execute: Allow tool execution from the inspector UI.
     """
     if not name:
         raise ValueError("name must not be empty")
@@ -103,6 +109,8 @@ def serve(
         valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
         if log_level.upper() not in valid_levels:
             raise ValueError(f"Unknown log level: {log_level!r}. Valid: {sorted(valid_levels)}")
+    if explorer and not inspector_prefix.startswith("/"):
+        raise ValueError("inspector_prefix must start with '/'")
 
     version = version or __version__
 
@@ -129,8 +137,23 @@ def serve(
         transport,
     )
 
-    # Select and run transport
+    # Build optional inspector mount for HTTP transports
     transport_lower = transport.lower()
+    extra_routes = None
+    if explorer and transport_lower in ("streamable-http", "sse"):
+        from apcore_mcp.inspector import create_inspector_mount
+
+        extra_routes = [
+            create_inspector_mount(
+                tools,
+                router,
+                allow_execute=allow_execute,
+                inspector_prefix=inspector_prefix,
+            )
+        ]
+        logger.info("Tool Inspector enabled at %s", inspector_prefix)
+
+    # Select and run transport
     transport_manager = TransportManager(metrics_collector=metrics_collector)
     transport_manager.set_module_count(len(tools))
 
@@ -138,9 +161,11 @@ def serve(
         if transport_lower == "stdio":
             await transport_manager.run_stdio(server, init_options)
         elif transport_lower == "streamable-http":
-            await transport_manager.run_streamable_http(server, init_options, host=host, port=port)
+            await transport_manager.run_streamable_http(
+                server, init_options, host=host, port=port, extra_routes=extra_routes
+            )
         elif transport_lower == "sse":
-            await transport_manager.run_sse(server, init_options, host=host, port=port)
+            await transport_manager.run_sse(server, init_options, host=host, port=port, extra_routes=extra_routes)
         else:
             raise ValueError(f"Unknown transport: {transport!r}. Expected 'stdio', 'streamable-http', or 'sse'.")
 

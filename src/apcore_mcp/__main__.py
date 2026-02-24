@@ -68,6 +68,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Logging level (default: INFO).",
     )
 
+    # Inspector options
+    parser.add_argument(
+        "--explorer",
+        action="store_true",
+        default=False,
+        help="Enable the browser-based Tool Inspector UI (HTTP transports only).",
+    )
+    parser.add_argument(
+        "--inspector-prefix",
+        default="/inspector",
+        help='URL prefix for the inspector (default: "/inspector").',
+    )
+    parser.add_argument(
+        "--allow-execute",
+        action="store_true",
+        default=False,
+        help="Allow tool execution from the inspector UI.",
+    )
+
     return parser
 
 
@@ -138,6 +157,9 @@ def main() -> None:
             port=args.port,
             name=args.name,
             version=args.version,
+            explorer=args.explorer,
+            inspector_prefix=args.inspector_prefix,
+            allow_execute=args.allow_execute,
         )
     except Exception:
         logger.exception("Server startup failed.")

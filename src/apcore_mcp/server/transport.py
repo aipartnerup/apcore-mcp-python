@@ -78,6 +78,7 @@ class TransportManager:
         init_options: InitializationOptions,
         host: str = "127.0.0.1",
         port: int = 8000,
+        extra_routes: list[Route | Mount] | None = None,
     ) -> None:
         """Start MCP server with Streamable HTTP transport."""
         self._validate_host_port(host, port)
@@ -95,13 +96,15 @@ class TransportManager:
             async def _metrics(request: Any) -> Response:
                 return self._build_metrics_response()
 
-            app = Starlette(
-                routes=[
-                    Route("/health", endpoint=_health, methods=["GET"]),
-                    Route("/metrics", endpoint=_metrics, methods=["GET"]),
-                    Mount("/mcp", app=transport.handle_request),
-                ],
-            )
+            routes: list[Route | Mount] = [
+                Route("/health", endpoint=_health, methods=["GET"]),
+                Route("/metrics", endpoint=_metrics, methods=["GET"]),
+            ]
+            if extra_routes:
+                routes.extend(extra_routes)
+            routes.append(Mount("/mcp", app=transport.handle_request))
+
+            app = Starlette(routes=routes)
 
             config = uvicorn.Config(app, host=host, port=port, log_level="info")
             uv_server = uvicorn.Server(config)
@@ -117,6 +120,7 @@ class TransportManager:
         init_options: InitializationOptions,
         host: str = "127.0.0.1",
         port: int = 8000,
+        extra_routes: list[Route | Mount] | None = None,
     ) -> None:
         """Start MCP server with SSE transport (deprecated)."""
         self._validate_host_port(host, port)
@@ -139,14 +143,20 @@ class TransportManager:
         async def _metrics(request: Any) -> Response:
             return self._build_metrics_response()
 
-        app = Starlette(
-            routes=[
-                Route("/health", endpoint=_health, methods=["GET"]),
-                Route("/metrics", endpoint=_metrics, methods=["GET"]),
+        routes: list[Route | Mount] = [
+            Route("/health", endpoint=_health, methods=["GET"]),
+            Route("/metrics", endpoint=_metrics, methods=["GET"]),
+        ]
+        if extra_routes:
+            routes.extend(extra_routes)
+        routes.extend(
+            [
                 Route("/sse", endpoint=handle_sse, methods=["GET"]),
                 Mount("/messages/", app=sse_transport.handle_post_message),
-            ],
+            ]
         )
+
+        app = Starlette(routes=routes)
 
         config = uvicorn.Config(app, host=host, port=port, log_level="info")
         uv_server = uvicorn.Server(config)
