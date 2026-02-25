@@ -152,7 +152,7 @@ class TestRoutingOverhead:
         iterations = 1000
         start = time.perf_counter()
         for _ in range(iterations):
-            content, is_error = await router.handle_call("perf.test", {"key": "value"})
+            content, is_error, trace_id = await router.handle_call("perf.test", {"key": "value"})
             assert is_error is False
         elapsed = time.perf_counter() - start
 
@@ -218,11 +218,11 @@ class TestConcurrentCalls:
         assert elapsed < 0.5, f"10 concurrent calls took {elapsed * 1000:.1f}ms, expected < 500ms"
 
         # All results must be successful
-        for _content, is_error in outcomes:
+        for _content, is_error, _trace in outcomes:
             assert is_error is False, "Expected no error for any concurrent call"
 
         # Verify no cross-contamination: each result matches its module
-        for i, (content, _) in enumerate(outcomes):
+        for i, (content, _, _trace) in enumerate(outcomes):
             parsed = json.loads(content[0]["text"])
             assert parsed["id"] == i, f"Result cross-contamination: expected id={i}, got id={parsed['id']}"
             assert (

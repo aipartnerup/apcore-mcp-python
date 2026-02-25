@@ -74,7 +74,7 @@ _EXPLORER_HTML = """\
     for (var key in props) {
       if (!props.hasOwnProperty(key)) continue;
       var t = props[key].type;
-      if (props[key]['default'] !== undefined) {
+      if (props[key]['default'] != null) { // != null catches both null and undefined
         result[key] = props[key]['default'];
       } else if (t === 'string') {
         result[key] = '';
@@ -211,12 +211,21 @@ _EXPLORER_HTML = """\
       if (!result) return;
       btn.disabled = false;
       btn.textContent = 'Execute';
-      if (result.status >= 400) {
-        resultArea.innerHTML = '<span class="schema-label result-error">Error (' + result.status + ')</span>' +
-          '<pre>' + esc(JSON.stringify(result.data, null, 2)) + '</pre>';
+      var data = result.data;
+      // MCP CallToolResult format: {content: [...], isError: bool, _meta: {...}}
+      if (data.isError) {
+        var errText = (data.content || []).map(function(c) { return c.text || ''; }).join('\\n');
+        resultArea.innerHTML = '<span class="schema-label result-error">Error</span>' +
+          '<pre>' + esc(errText) + '</pre>';
       } else {
+        // Parse text content blocks for display
+        var texts = (data.content || []).filter(function(c) { return c.type === 'text'; });
+        var display = texts.map(function(c) {
+          try { return JSON.parse(c.text); } catch(e) { return c.text; }
+        });
+        var output = display.length === 1 ? display[0] : display;
         resultArea.innerHTML = '<span class="schema-label result-success">Result</span>' +
-          '<pre>' + esc(JSON.stringify(result.data, null, 2)) + '</pre>';
+          '<pre>' + esc(JSON.stringify(output, null, 2)) + '</pre>';
       }
     })
     .catch(function(e) {

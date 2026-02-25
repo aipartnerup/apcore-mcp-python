@@ -90,6 +90,7 @@ def mock_router() -> AsyncMock:
     router.handle_call.return_value = (
         [{"type": "text", "text": '{"result": "ok"}'}],
         False,
+        "trace-abc",
     )
     return router
 
@@ -231,7 +232,8 @@ class TestTC005CallTool:
         )
         assert response.status_code == 200
         data = response.json()
-        assert "result" in data
+        assert "content" in data
+        assert data["isError"] is False
         mock_router.handle_call.assert_called_once_with("image.resize", {"width": 100, "height": 200})
 
     def test_call_tool_404_for_unknown(
@@ -245,6 +247,29 @@ class TestTC005CallTool:
         )
         assert response.status_code == 404
 
+    def test_call_tool_returns_mcp_format(
+        self,
+        explorer_app: Starlette,
+        mock_router: AsyncMock,
+    ) -> None:
+        """Response follows MCP CallToolResult format with content, isError, and _meta."""
+        mock_router.handle_call.return_value = (
+            [{"type": "text", "text": '{"id": 1, "title": "Buy milk"}'}],
+            False,
+            "abc-123",
+        )
+        client = TestClient(explorer_app)
+        response = client.post(
+            "/explorer/tools/image.resize/call",
+            json={"width": 100, "height": 200},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["isError"] is False
+        assert isinstance(data["content"], list)
+        assert data["content"][0]["type"] == "text"
+        assert data["_meta"]["_trace_id"] == "abc-123"
+
     def test_call_tool_returns_error_on_failure(
         self,
         explorer_app: Starlette,
@@ -253,6 +278,7 @@ class TestTC005CallTool:
         mock_router.handle_call.return_value = (
             [{"type": "text", "text": "Module not found"}],
             True,
+            None,
         )
         client = TestClient(explorer_app)
         response = client.post(
@@ -261,7 +287,8 @@ class TestTC005CallTool:
         )
         assert response.status_code == 500
         data = response.json()
-        assert "error" in data
+        assert data["isError"] is True
+        assert isinstance(data["content"], list)
 
 
 # ---------------------------------------------------------------------------

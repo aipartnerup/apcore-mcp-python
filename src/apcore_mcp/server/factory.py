@@ -147,7 +147,7 @@ class MCPServerFactory:
             server: The MCP Server to register handlers on.
             tools: List of Tool objects to expose via list_tools.
             router: A router with an async handle_call(name, arguments, extra)
-                    method that returns (content_list, is_error).
+                    method that returns (content_list, is_error, trace_id).
         """
 
         @server.list_tools()
@@ -155,7 +155,7 @@ class MCPServerFactory:
             return list(tools)
 
         @server.call_tool()
-        async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
+        async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[mcp_types.TextContent]:
             from mcp.server.lowlevel.server import request_ctx
 
             ctx = request_ctx.get()
@@ -177,14 +177,18 @@ class MCPServerFactory:
                 extra["send_notification"] = send_notification
                 extra["progress_token"] = progress_token
 
-            content, is_error = await router.handle_call(name, arguments or {}, extra=extra)
+            content, is_error, _trace_id = await router.handle_call(name, arguments or {}, extra=extra)
+
+            # NOTE: The MCP SDK decorator always wraps our return in
+            # CallToolResult(isError=False). Setting isError=True or _meta
+            # is not supported by the current SDK decorator. For errors,
+            # we raise so the SDK sets isError=True on the CallToolResult.
+            text_contents = [
+                mcp_types.TextContent(type="text", text=item["text"]) for item in content if item.get("type") == "text"
+            ]
             if is_error:
-                return [
-                    mcp_types.TextContent(type="text", text=item["text"])
-                    for item in content
-                    if item.get("type") == "text"
-                ]
-            return content
+                raise Exception(text_contents[0].text if text_contents else "Unknown error")
+            return text_contents
 
     def register_resource_handlers(
         self,

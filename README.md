@@ -42,6 +42,18 @@ Requires Python 3.10+ and `apcore >= 0.5.0`.
 
 ## Quick Start
 
+### Try it now
+
+The repo includes 5 example modules (class-based + binding.yaml) you can run immediately:
+
+```bash
+pip install -e .
+PYTHONPATH=./examples/binding_demo python examples/run.py
+# Open http://127.0.0.1:8000/explorer/
+```
+
+See [examples/README.md](examples/README.md) for all run modes and module details.
+
 ### Zero-code approach (CLI)
 
 If you already have an apcore-based project with an extensions directory, just run:

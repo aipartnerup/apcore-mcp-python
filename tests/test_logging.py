@@ -245,7 +245,7 @@ class TestRouterErrorLogging:
         router = ExecutionRouter(mock_executor)
 
         with caplog.at_level(logging.DEBUG, logger="apcore_mcp.server.router"):
-            content, is_error = await router.handle_call("bad.module", {})
+            content, is_error, trace_id = await router.handle_call("bad.module", {})
 
         assert is_error is True
         error_records = [r for r in caplog.records if "handle_call error" in r.message]

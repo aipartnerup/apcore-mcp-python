@@ -131,7 +131,7 @@ class TestACLDeniedNoLeak:
         )
         router = ExecutionRouter(executor)
 
-        content, is_error = await router.handle_call("secret.module", {})
+        content, is_error, trace_id = await router.handle_call("secret.module", {})
 
         assert is_error is True
         response_text = content[0]["text"]
@@ -183,7 +183,7 @@ class TestNoStackTraceLeak:
         executor = StubExecutor(default_error=exception)
         router = ExecutionRouter(executor)
 
-        content, is_error = await router.handle_call("any.module", {})
+        content, is_error, trace_id = await router.handle_call("any.module", {})
 
         assert is_error is True
         response_text = content[0]["text"]
@@ -240,7 +240,7 @@ class TestMalformedInput:
         router = ExecutionRouter(executor)
 
         # Must not raise -- either success or graceful error
-        content, is_error = await router.handle_call("test.module", malicious_input)
+        content, is_error, trace_id = await router.handle_call("test.module", malicious_input)
 
         assert isinstance(content, list), "content must be a list"
         assert len(content) >= 1, "content must have at least one element"
@@ -265,7 +265,7 @@ class TestOversizedInput:
         router = ExecutionRouter(executor)
 
         # Must not crash -- either success or error is acceptable
-        content, is_error = await router.handle_call("test.module", arguments)
+        content, is_error, trace_id = await router.handle_call("test.module", arguments)
 
         assert isinstance(content, list), "content must be a list"
         assert len(content) >= 1, "content must have at least one element"
@@ -278,7 +278,7 @@ class TestOversizedInput:
         executor = StubExecutor(results={"test.module": {"ok": True}})
         router = ExecutionRouter(executor)
 
-        content, is_error = await router.handle_call("test.module", arguments)
+        content, is_error, trace_id = await router.handle_call("test.module", arguments)
 
         assert isinstance(content, list)
         assert isinstance(is_error, bool)
@@ -335,7 +335,7 @@ class TestCallChainNotExposed:
         executor = StubExecutor(default_error=error)
         router = ExecutionRouter(executor)
 
-        content, is_error = await router.handle_call("any.module", {})
+        content, is_error, trace_id = await router.handle_call("any.module", {})
 
         assert is_error is True
         response_text = content[0]["text"]

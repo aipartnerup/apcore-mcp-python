@@ -1,0 +1,18 @@
+# Zero-code binding: maps myapp.convert_temperature → apcore module
+# auto_schema infers input/output from Python type hints and defaults.
+# No changes needed in myapp.py — this file is the only bridge.
+
+bindings:
+- module_id: convert_temperature
+  target: myapp:convert_temperature
+  description: Convert temperature between Celsius, Fahrenheit, and Kelvin
+  tags:
+    - math
+    - conversion
+  version: 1.0.0
+  annotations:
+    readonly: true
+    destructive: false
+    idempotent: true
+    open_world: false
+  auto_schema: true

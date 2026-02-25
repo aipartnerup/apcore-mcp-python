@@ -89,7 +89,7 @@ class TestStreamingPath:
             "send_notification": send_notification,
         }
 
-        content, is_error = await router.handle_call("my.tool", {"x": 1}, extra=extra)
+        content, is_error, trace_id = await router.handle_call("my.tool", {"x": 1}, extra=extra)
 
         assert is_error is False
         # Executor.stream() should have been called, NOT call_async()
@@ -105,13 +105,12 @@ class TestStreamingPath:
             assert notification["params"]["message"] == json.dumps(chunk, default=str)
 
         # Accumulated result should be shallow merge of all chunks
-        assert len(content) == 2  # result + trace_id
+        assert len(content) == 1
         parsed = json.loads(content[0]["text"])
         assert parsed == {"step": "done", "progress": 100}
 
-        # trace_id should be in second content item
-        trace_meta = json.loads(content[1]["text"])
-        assert "_trace_id" in trace_meta
+        # trace_id returned as third tuple element
+        assert trace_id is not None
 
     async def test_falls_back_to_call_async_when_no_stream_method(self) -> None:
         """When executor has no stream() method, falls back to call_async()
@@ -125,10 +124,10 @@ class TestStreamingPath:
             "send_notification": send_notification,
         }
 
-        content, is_error = await router.handle_call("my.tool", {"x": 1}, extra=extra)
+        content, is_error, trace_id = await router.handle_call("my.tool", {"x": 1}, extra=extra)
 
         assert is_error is False
-        assert len(content) == 2  # result + trace_id
+        assert len(content) == 1
         assert len(executor.calls) == 1
         # send_notification should NOT have been called
         send_notification.assert_not_called()
@@ -144,7 +143,7 @@ class TestStreamingPath:
         router = ExecutionRouter(executor)
 
         # No extra -> no streaming
-        content, is_error = await router.handle_call("my.tool", {"x": 1})
+        content, is_error, trace_id = await router.handle_call("my.tool", {"x": 1})
 
         assert is_error is False
         # Should use call_async, not stream
@@ -160,7 +159,7 @@ class TestStreamingPath:
 
         extra: dict[str, Any] = {"send_notification": AsyncMock()}
 
-        content, is_error = await router.handle_call("my.tool", {}, extra=extra)
+        content, is_error, trace_id = await router.handle_call("my.tool", {}, extra=extra)
 
         assert is_error is False
         assert len(executor.call_async_calls) == 1
@@ -175,7 +174,7 @@ class TestStreamingPath:
 
         extra: dict[str, Any] = {"progress_token": "tok-3"}
 
-        content, is_error = await router.handle_call("my.tool", {}, extra=extra)
+        content, is_error, trace_id = await router.handle_call("my.tool", {}, extra=extra)
 
         assert is_error is False
         assert len(executor.call_async_calls) == 1
@@ -198,10 +197,10 @@ class TestStreamingPath:
             "send_notification": send_notification,
         }
 
-        content, is_error = await router.handle_call("my.tool", {}, extra=extra)
+        content, is_error, trace_id = await router.handle_call("my.tool", {}, extra=extra)
 
         assert is_error is False
-        assert len(content) == 2  # result + trace_id
+        assert len(content) == 1
         parsed = json.loads(content[0]["text"])
         assert parsed == {"alpha": 1, "beta": 2, "gamma": 3}
 
@@ -221,10 +220,10 @@ class TestStreamingPath:
             "send_notification": send_notification,
         }
 
-        content, is_error = await router.handle_call("my.tool", {}, extra=extra)
+        content, is_error, trace_id = await router.handle_call("my.tool", {}, extra=extra)
 
         assert is_error is False
-        assert len(content) == 2  # result + trace_id
+        assert len(content) == 1
         parsed = json.loads(content[0]["text"])
         assert parsed == {"status": "done", "count": 10}
 
@@ -250,7 +249,7 @@ class TestStreamingPath:
             "send_notification": send_notification,
         }
 
-        content, is_error = await router.handle_call("my.tool", {}, extra=extra)
+        content, is_error, trace_id = await router.handle_call("my.tool", {}, extra=extra)
 
         assert is_error is True
         # The first chunk should still have been notified before the error
@@ -329,10 +328,10 @@ class TestStreamingPath:
             "send_notification": send_notification,
         }
 
-        content, is_error = await router.handle_call("my.tool", {"x": 1}, extra=extra)
+        content, is_error, trace_id = await router.handle_call("my.tool", {"x": 1}, extra=extra)
 
         assert is_error is False
-        assert len(content) == 2  # result + trace_id
+        assert len(content) == 1
         parsed = json.loads(content[0]["text"])
         assert parsed == {"result": "ok"}
         assert len(executor.stream_calls) == 1

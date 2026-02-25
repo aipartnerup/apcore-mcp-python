@@ -169,14 +169,14 @@ class TestFullMCPFlow:
 
     async def test_router_returns_success(self, router: ExecutionRouter) -> None:
         """Calling the router with a valid tool name returns success."""
-        content, is_error = await router.handle_call("image.resize", {"width": 800})
+        content, is_error, trace_id = await router.handle_call("image.resize", {"width": 800})
         assert is_error is False
-        assert len(content) == 2  # result + trace_id
+        assert len(content) == 1
         assert content[0]["type"] == "text"
 
     async def test_router_result_contains_expected_data(self, router: ExecutionRouter) -> None:
         """The router result JSON contains the executor's return value."""
-        content, is_error = await router.handle_call("image.resize", {"width": 800})
+        content, is_error, trace_id = await router.handle_call("image.resize", {"width": 800})
         assert is_error is False
         parsed = json.loads(content[0]["text"])
         assert parsed == {"status": "ok"}
@@ -194,7 +194,7 @@ class TestFullMCPFlow:
         assert tools[0].name == "image.resize"
 
         # Call through router
-        content, is_error = await router.handle_call("image.resize", {"width": 800})
+        content, is_error, trace_id = await router.handle_call("image.resize", {"width": 800})
         assert is_error is False
         parsed = json.loads(content[0]["text"])
         assert parsed == {"status": "ok"}
@@ -247,7 +247,7 @@ class TestErrorFlowNonExistentTool:
         executor = StrictExecutor(known={"image.resize": {"status": "ok"}})
         router = ExecutionRouter(executor)
 
-        content, is_error = await router.handle_call("nonexistent.tool", {"key": "value"})
+        content, is_error, trace_id = await router.handle_call("nonexistent.tool", {"key": "value"})
 
         assert is_error is True
 
@@ -268,7 +268,7 @@ class TestErrorFlowNonExistentTool:
         executor = StrictExecutor(known={"image.resize": {"status": "ok"}})
         router = ExecutionRouter(executor)
 
-        content, is_error = await router.handle_call("nonexistent.tool", {"key": "value"})
+        content, is_error, trace_id = await router.handle_call("nonexistent.tool", {"key": "value"})
 
         assert is_error is True
         assert len(content) == 1
@@ -285,7 +285,7 @@ class TestErrorFlowNonExistentTool:
 
         router = ExecutionRouter(RaisingExecutor())
 
-        content, is_error = await router.handle_call("nonexistent.tool", {"key": "value"})
+        content, is_error, trace_id = await router.handle_call("nonexistent.tool", {"key": "value"})
 
         assert is_error is True
         assert len(content) == 1
@@ -466,7 +466,7 @@ class TestACLEnforcement:
 
     async def test_public_tool_succeeds(self, router: ExecutionRouter) -> None:
         """Calling a public tool returns success with the expected result."""
-        content, is_error = await router.handle_call("public.tool", {})
+        content, is_error, trace_id = await router.handle_call("public.tool", {})
 
         assert is_error is False
         parsed = json.loads(content[0]["text"])
@@ -474,13 +474,13 @@ class TestACLEnforcement:
 
     async def test_private_tool_returns_error(self, router: ExecutionRouter) -> None:
         """Calling a private tool returns is_error=True."""
-        content, is_error = await router.handle_call("private.tool", {})
+        content, is_error, trace_id = await router.handle_call("private.tool", {})
 
         assert is_error is True
 
     async def test_private_tool_error_message_is_access_denied(self, router: ExecutionRouter) -> None:
         """The error message for ACL-denied is 'Access denied'."""
-        content, is_error = await router.handle_call("private.tool", {})
+        content, is_error, trace_id = await router.handle_call("private.tool", {})
 
         assert is_error is True
         assert "access denied" in content[0]["text"].lower()
@@ -488,13 +488,13 @@ class TestACLEnforcement:
     async def test_both_tools_in_sequence(self, router: ExecutionRouter) -> None:
         """Public succeeds, then private fails -- both in sequence."""
         # Public tool call
-        content_pub, is_error_pub = await router.handle_call("public.tool", {})
+        content_pub, is_error_pub, _trace_pub = await router.handle_call("public.tool", {})
         assert is_error_pub is False
         parsed = json.loads(content_pub[0]["text"])
         assert parsed == {"result": "ok"}
 
         # Private tool call
-        content_priv, is_error_priv = await router.handle_call("private.tool", {})
+        content_priv, is_error_priv, _trace_priv = await router.handle_call("private.tool", {})
         assert is_error_priv is True
         assert "access denied" in content_priv[0]["text"].lower()
 

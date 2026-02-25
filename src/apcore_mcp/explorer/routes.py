@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -59,7 +58,8 @@ def build_explorer_routes(
 
     Args:
         tools: List of MCP Tool objects.
-        router: An ExecutionRouter with async handle_call(name, arguments).
+        router: An ExecutionRouter with async handle_call(name, arguments)
+            returning (content, is_error, trace_id).
         allow_execute: Whether to allow tool execution via the call endpoint.
 
     Returns:
@@ -97,24 +97,24 @@ def build_explorer_routes(
             body = {}
 
         try:
-            content, is_error = await router.handle_call(name, body)
-            # Extract text from content list
-            texts = [item.get("text", "") for item in content if item.get("type") == "text"]
-            # Try to parse as JSON for a cleaner response
-            if len(texts) == 1:
-                try:
-                    result = json.loads(texts[0])
-                except (json.JSONDecodeError, TypeError):
-                    result = texts[0]
-            else:
-                result = texts
-
-            if is_error:
-                return JSONResponse({"error": result}, status_code=500)
-            return JSONResponse({"result": result})
+            content, is_error, trace_id = await router.handle_call(name, body)
+            # Return MCP-compliant CallToolResult format
+            result: dict[str, Any] = {
+                "content": content,
+                "isError": is_error,
+            }
+            if trace_id:
+                result["_meta"] = {"_trace_id": trace_id}
+            return JSONResponse(result, status_code=500 if is_error else 200)
         except Exception as exc:
             logger.error("Explorer call_tool error for %s: %s", name, exc)
-            return JSONResponse({"error": str(exc)}, status_code=500)
+            return JSONResponse(
+                {
+                    "content": [{"type": "text", "text": str(exc)}],
+                    "isError": True,
+                },
+                status_code=500,
+            )
 
     return [
         Route("/", endpoint=explorer_page, methods=["GET"]),

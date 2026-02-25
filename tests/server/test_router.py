@@ -187,13 +187,13 @@ class TestExecutionRouter:
 
     async def test_handle_call_success(self, router: ExecutionRouter) -> None:
         """Successful execution returns JSON content with is_error=False."""
-        content, is_error = await router.handle_call(
+        content, is_error, trace_id = await router.handle_call(
             "image.resize",
             {"width": 100, "height": 100, "image_path": "/tmp/in.png"},
         )
 
         assert is_error is False
-        assert len(content) == 2  # result + trace_id
+        assert len(content) == 1
         assert content[0]["type"] == "text"
 
         # The text should be valid JSON containing the result
@@ -201,9 +201,8 @@ class TestExecutionRouter:
         assert parsed["output_path"] == "/tmp/out.png"
         assert parsed["new_size"] == [100, 100]
 
-        # Second content item should contain trace_id
-        trace_meta = json.loads(content[1]["text"])
-        assert "_trace_id" in trace_meta
+        # trace_id returned as third tuple element
+        assert trace_id is not None
 
     async def test_handle_call_success_json_serialization(self) -> None:
         """Output dict is properly JSON serialized with all types preserved."""
@@ -219,10 +218,10 @@ class TestExecutionRouter:
         executor = StubExecutor(results={"test.module": result_data})
         router = ExecutionRouter(executor)
 
-        content, is_error = await router.handle_call("test.module", {})
+        content, is_error, trace_id = await router.handle_call("test.module", {})
 
         assert is_error is False
-        assert len(content) == 2  # result + trace_id
+        assert len(content) == 1
         parsed = json.loads(content[0]["text"])
         assert parsed == result_data
 
@@ -243,10 +242,10 @@ class TestExecutionRouter:
         executor = StubExecutor(results={"system.ping": {"status": "ok"}})
         router = ExecutionRouter(executor)
 
-        content, is_error = await router.handle_call("system.ping", {})
+        content, is_error, trace_id = await router.handle_call("system.ping", {})
 
         assert is_error is False
-        assert len(content) == 2  # result + trace_id
+        assert len(content) == 1
         parsed = json.loads(content[0]["text"])
         assert parsed["status"] == "ok"
 
@@ -258,7 +257,7 @@ class TestExecutionRouter:
         executor = StubExecutor()  # No results -> ModuleNotFoundStubError
         router = ExecutionRouter(executor)
 
-        content, is_error = await router.handle_call("nonexistent.module", {})
+        content, is_error, trace_id = await router.handle_call("nonexistent.module", {})
 
         assert is_error is True
         assert len(content) == 1
@@ -278,7 +277,7 @@ class TestExecutionRouter:
         executor = StubExecutor(error=error)
         router = ExecutionRouter(executor)
 
-        content, is_error = await router.handle_call("image.resize", {"width": -1})
+        content, is_error, trace_id = await router.handle_call("image.resize", {"width": -1})
 
         assert is_error is True
         assert content[0]["type"] == "text"
@@ -292,7 +291,7 @@ class TestExecutionRouter:
         executor = StubExecutor(error=error)
         router = ExecutionRouter(executor)
 
-        content, is_error = await router.handle_call("admin.delete", {})
+        content, is_error, trace_id = await router.handle_call("admin.delete", {})
 
         assert is_error is True
         assert "access denied" in content[0]["text"].lower()
@@ -311,7 +310,7 @@ class TestExecutionRouter:
             executor = StubExecutor(error=error)
             router = ExecutionRouter(executor)
 
-            content, is_error = await router.handle_call("some.module", {})
+            content, is_error, trace_id = await router.handle_call("some.module", {})
 
             assert is_error is True, f"{type(error).__name__} should set is_error=True"
             assert (
@@ -324,7 +323,7 @@ class TestExecutionRouter:
         executor = StubExecutor(error=error)
         router = ExecutionRouter(executor)
 
-        content, is_error = await router.handle_call("some.module", {})
+        content, is_error, trace_id = await router.handle_call("some.module", {})
 
         assert is_error is True
         assert content[0]["text"] == "Internal error occurred"
@@ -341,10 +340,10 @@ class TestExecutionRouter:
         executor = StubExecutor(results={"time.now": result_data})
         router = ExecutionRouter(executor)
 
-        content, is_error = await router.handle_call("time.now", {})
+        content, is_error, trace_id = await router.handle_call("time.now", {})
 
         assert is_error is False
-        assert len(content) == 2  # result + trace_id
+        assert len(content) == 1
         parsed = json.loads(content[0]["text"])
         # datetime should be converted to string via default=str
         assert parsed["timestamp"] == str(now)
@@ -369,9 +368,9 @@ class TestExecutionRouter:
         results_list = await asyncio.gather(*tasks)
 
         # All three should succeed
-        for content, is_error in results_list:
+        for content, is_error, _trace_id in results_list:
             assert is_error is False
-            assert len(content) == 2  # result + trace_id
+            assert len(content) == 1
             assert content[0]["type"] == "text"
 
         # Verify correct results were returned for each
@@ -444,10 +443,10 @@ class TestExecutionRouter:
         router = ExecutionRouter(executor)
 
         # Context is always created now, so legacy fallback always triggers
-        content, is_error = await router.handle_call("test.module", {})
+        content, is_error, trace_id = await router.handle_call("test.module", {})
 
         assert is_error is False
-        assert len(content) == 2  # result + trace_id
+        assert len(content) == 1
         parsed = json.loads(content[0]["text"])
         assert parsed == {"ok": True}
         # Legacy executor should still have been called
@@ -474,10 +473,10 @@ class TestExecutionRouter:
             "send_notification": send_notification,
         }
 
-        content, is_error = await router.handle_call("test.module", {}, extra=extra)
+        content, is_error, trace_id = await router.handle_call("test.module", {}, extra=extra)
 
         assert is_error is False
-        assert len(content) == 2  # result + trace_id
+        assert len(content) == 1
         assert send_notification.call_count == 1
         notification = send_notification.call_args[0][0]
         assert notification["method"] == "notifications/progress"
@@ -509,10 +508,10 @@ class TestExecutionRouter:
 
         extra: dict[str, Any] = {"session": mock_session}
 
-        content, is_error = await router.handle_call("test.module", {}, extra=extra)
+        content, is_error, trace_id = await router.handle_call("test.module", {}, extra=extra)
 
         assert is_error is False
-        assert len(content) == 2  # result + trace_id
+        assert len(content) == 1
         parsed = json.loads(content[0]["text"])
         assert parsed["elicit_result"]["action"] == "accept"
         assert parsed["elicit_result"]["content"] == {"confirmed": True}
@@ -541,10 +540,10 @@ class TestExecutionRouter:
 
         extra: dict[str, Any] = {"session": mock_session}
 
-        content, is_error = await router.handle_call("test.module", {}, extra=extra)
+        content, is_error, trace_id = await router.handle_call("test.module", {}, extra=extra)
 
         assert is_error is False
-        assert len(content) == 2  # result + trace_id
+        assert len(content) == 1
         parsed = json.loads(content[0]["text"])
         assert parsed["elicit_result"] is None
 
@@ -604,7 +603,7 @@ class TestExecutionRouter:
         executor = ValidatingExecutor()
         router = ExecutionRouter(executor, validate_inputs=True)
 
-        content, is_error = await router.handle_call("image.resize", {})
+        content, is_error, trace_id = await router.handle_call("image.resize", {})
 
         assert is_error is True
         assert "Validation failed" in content[0]["text"]
@@ -634,7 +633,7 @@ class TestExecutionRouter:
         executor = ValidatingExecutor()
         router = ExecutionRouter(executor, validate_inputs=True)
 
-        content, is_error = await router.handle_call("test.module", {"x": 1})
+        content, is_error, trace_id = await router.handle_call("test.module", {"x": 1})
 
         assert is_error is False
         assert len(executor.calls) == 1
@@ -644,7 +643,7 @@ class TestExecutionRouter:
         executor = StubExecutor(results={"test.module": {"ok": True}})
         router = ExecutionRouter(executor, validate_inputs=True)
 
-        content, is_error = await router.handle_call("test.module", {})
+        content, is_error, trace_id = await router.handle_call("test.module", {})
 
         assert is_error is False
         parsed = json.loads(content[0]["text"])
@@ -655,7 +654,7 @@ class TestExecutionRouter:
         executor = StubExecutor(results={"test.module": {"ok": True}})
         router = ExecutionRouter(executor)
 
-        content, is_error = await router.handle_call("test.module", {})
+        content, is_error, trace_id = await router.handle_call("test.module", {})
 
         assert is_error is False
 
@@ -672,7 +671,7 @@ class TestExecutionRouter:
         executor = FailingValidateExecutor()
         router = ExecutionRouter(executor, validate_inputs=True)
 
-        content, is_error = await router.handle_call("nonexistent.module", {})
+        content, is_error, trace_id = await router.handle_call("nonexistent.module", {})
 
         assert is_error is True
         assert "nonexistent.module" in content[0]["text"]

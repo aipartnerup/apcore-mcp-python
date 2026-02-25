@@ -21,8 +21,9 @@ class ExecutionRouter:
 
     The router sits between the MCP server's call_tool handler and the
     apcore Executor.  It delegates to ``executor.call_async()`` and
-    converts the result (or any exception) into a ``(content, is_error)``
-    tuple that the MCP factory can pass directly to ``CallToolResult``.
+    converts the result (or any exception) into a
+    ``(content, is_error, trace_id)`` tuple that the MCP factory can
+    pass directly to ``CallToolResult``.
 
     When the executor also exposes an async ``stream()`` method **and**
     the caller provides a ``progress_token`` + ``send_notification``
@@ -63,7 +64,7 @@ class ExecutionRouter:
         tool_name: str,
         arguments: dict[str, Any],
         extra: dict[str, Any] | None = None,
-    ) -> tuple[list[dict[str, str]], bool]:
+    ) -> tuple[list[dict[str, str]], bool, str | None]:
         """Execute a tool call through the Executor pipeline.
 
         Args:
@@ -75,9 +76,10 @@ class ExecutionRouter:
                 and elicitation support.
 
         Returns:
-            A ``(content, is_error)`` tuple where *content* is a list of
-            ``TextContent``-compatible dicts and *is_error* signals
-            whether the result represents an error.
+            A ``(content, is_error, trace_id)`` tuple where *content* is
+            a list of ``TextContent``-compatible dicts, *is_error* signals
+            whether the result represents an error, and *trace_id* is the
+            execution trace ID (or None).
         """
         logger.debug("Executing tool call: %s", tool_name)
 
@@ -153,13 +155,14 @@ class ExecutionRouter:
                     return (
                         [{"type": "text", "text": f"Validation failed: {detail}"}],
                         True,
+                        None,
                     )
             except AttributeError:
                 pass  # executor lacks validate() — skip
             except Exception as error:
                 logger.debug("validate_inputs error for %s: %s", tool_name, error)
                 error_info = self._error_mapper.to_mcp_error(error)
-                return ([{"type": "text", "text": error_info["message"]}], True)
+                return ([{"type": "text", "text": error_info["message"]}], True, None)
 
         # Streaming path: executor has stream() AND we have both helpers
         can_stream = hasattr(self._executor, "stream") and progress_token is not None and send_notification is not None
@@ -181,7 +184,7 @@ class ExecutionRouter:
         tool_name: str,
         arguments: dict[str, Any],
         context: Any | None = None,
-    ) -> tuple[list[dict[str, str]], bool]:
+    ) -> tuple[list[dict[str, str]], bool, str | None]:
         """Non-streaming execution via executor.call_async()."""
         try:
             if self._call_async_accepts_context:
@@ -190,18 +193,12 @@ class ExecutionRouter:
                 result = await self._executor.call_async(tool_name, arguments)
             json_output = json.dumps(result, default=str)
             content: list[dict[str, str]] = [{"type": "text", "text": json_output}]
-            if context is not None:
-                content.append(
-                    {
-                        "type": "text",
-                        "text": json.dumps({"_trace_id": context.trace_id}),
-                    }
-                )
-            return (content, False)
+            trace_id = context.trace_id if context is not None else None
+            return (content, False, trace_id)
         except Exception as error:
             logger.error("handle_call error for %s: %s", tool_name, error)
             error_info = self._error_mapper.to_mcp_error(error)
-            return ([{"type": "text", "text": error_info["message"]}], True)
+            return ([{"type": "text", "text": error_info["message"]}], True, None)
 
     async def _handle_stream(
         self,
@@ -210,7 +207,7 @@ class ExecutionRouter:
         progress_token: str | int,
         send_notification: Callable[[dict[str, Any]], Coroutine[Any, Any, None]],
         context: Any | None = None,
-    ) -> tuple[list[dict[str, str]], bool]:
+    ) -> tuple[list[dict[str, str]], bool, str | None]:
         """Streaming execution via executor.stream().
 
         Iterates the async generator, sends each chunk as a
@@ -245,15 +242,9 @@ class ExecutionRouter:
 
             json_output = json.dumps(accumulated, default=str)
             content: list[dict[str, str]] = [{"type": "text", "text": json_output}]
-            if context is not None:
-                content.append(
-                    {
-                        "type": "text",
-                        "text": json.dumps({"_trace_id": context.trace_id}),
-                    }
-                )
-            return (content, False)
+            trace_id = context.trace_id if context is not None else None
+            return (content, False, trace_id)
         except Exception as error:
             logger.error("handle_call stream error for %s: %s", tool_name, error)
             error_info = self._error_mapper.to_mcp_error(error)
-            return ([{"type": "text", "text": error_info["message"]}], True)
+            return ([{"type": "text", "text": error_info["message"]}], True, None)
