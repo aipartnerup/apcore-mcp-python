@@ -1,12 +1,12 @@
-"""Self-contained HTML page for the MCP Tool Inspector."""
+"""Self-contained HTML page for the MCP Tool Explorer."""
 
-_INSPECTOR_HTML = """\
+_EXPLORER_HTML = """\
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MCP Tool Inspector</title>
+<title>MCP Tool Explorer</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
@@ -49,7 +49,7 @@ _INSPECTOR_HTML = """\
 </style>
 </head>
 <body>
-<h1>MCP Tool Inspector</h1>
+<h1>MCP Tool Explorer</h1>
 <div id="loading">Loading tools...</div>
 <ul class="tool-list" id="tools"></ul>
 <div class="detail" id="detail"></div>

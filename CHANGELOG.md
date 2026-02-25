@@ -5,15 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-02-25
+
+### Changed
+
+- **Rename Inspector to Explorer**: Renamed the MCP Tool Inspector module to MCP Tool Explorer across the entire codebase — module path (`apcore_mcp.inspector` → `apcore_mcp.explorer`), CLI flags, Python API parameters, HTML UI, tests, README, and CHANGELOG. No functional changes; all endpoints and behavior remain identical.
+
+### Fixed
+
+- **Version test**: Fixed `test_run_uses_package_version_when_version_is_none` to patch `importlib.metadata.version` so the test is not sensitive to the installed package version.
+
 ## [0.5.0] - 2026-02-24
 
 ### Added
 
-- **MCP Tool Inspector (F-026)**: Optional browser-based UI for inspecting and testing MCP tools, mounted at `/inspector` when `explorer=True`. Includes 4 HTTP endpoints (`GET /inspector/`, `GET /inspector/tools`, `GET /inspector/tools/<name>`, `POST /inspector/tools/<name>/call`), a self-contained HTML/CSS/JS page with no external dependencies, configurable `inspector_prefix`, and `allow_execute` guard (default `False`). HTTP transports only; silently ignored for stdio.
-- **CLI Inspector flags**: `--explorer`, `--inspector-prefix`, and `--allow-execute` arguments.
-- **Inspector UI: proactive execution status detection**: The Inspector probes execution status on page load via a lightweight POST to `/tools/__probe__/call`, so the "Tool execution is disabled" message appears immediately instead of requiring a user click first.
-- **Inspector UI: URL-safe tool name encoding**: Tool names in fetch URLs are wrapped with `encodeURIComponent()` to prevent malformed URLs when tool names contain special characters.
-- **Inspector UI: error handling on tool detail fetch**: `.catch()` handler on the `loadDetail` fetch chain displays network errors in the detail panel instead of silently swallowing them.
+- **MCP Tool Explorer (F-026)**: Optional browser-based UI for inspecting and testing MCP tools, mounted at `/explorer` when `explorer=True`. Includes 4 HTTP endpoints (`GET /explorer/`, `GET /explorer/tools`, `GET /explorer/tools/<name>`, `POST /explorer/tools/<name>/call`), a self-contained HTML/CSS/JS page with no external dependencies, configurable `explorer_prefix`, and `allow_execute` guard (default `False`). HTTP transports only; silently ignored for stdio.
+- **CLI Explorer flags**: `--explorer`, `--explorer-prefix`, and `--allow-execute` arguments.
+- **Explorer UI: proactive execution status detection**: The Explorer probes execution status on page load via a lightweight POST to `/tools/__probe__/call`, so the "Tool execution is disabled" message appears immediately instead of requiring a user click first.
+- **Explorer UI: URL-safe tool name encoding**: Tool names in fetch URLs are wrapped with `encodeURIComponent()` to prevent malformed URLs when tool names contain special characters.
+- **Explorer UI: error handling on tool detail fetch**: `.catch()` handler on the `loadDetail` fetch chain displays network errors in the detail panel instead of silently swallowing them.
 
 ## [0.4.0] - 2026-02-23
 
@@ -100,6 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Filtering**: `tags` and `prefix` parameters for selective module exposure.
 - **260 tests**: Unit, integration, E2E, performance, and security test suites.
 
+[0.5.1]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.2.0...v0.3.0

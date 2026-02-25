@@ -332,6 +332,8 @@ class TestMCPServerRun:
 
     def test_run_uses_package_version_when_version_is_none(self) -> None:
         """_run uses __version__ from package when version is not specified."""
+        from apcore_mcp import __version__
+
         registry = StubRegistry()
         server = MCPServer(registry, version=None)
 
@@ -341,6 +343,7 @@ class TestMCPServerRun:
             patch("apcore_mcp.server.factory.MCPServerFactory") as mock_factory_cls,
             patch("apcore_mcp.server.router.ExecutionRouter"),
             patch("apcore_mcp.server.transport.TransportManager") as mock_transport_cls,
+            patch("importlib.metadata.version", return_value=__version__),
         ):
             mock_resolve_exec.return_value = MagicMock()
             mock_tm = mock_transport_cls.return_value

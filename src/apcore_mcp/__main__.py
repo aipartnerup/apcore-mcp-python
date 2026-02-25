@@ -68,23 +68,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Logging level (default: INFO).",
     )
 
-    # Inspector options
+    # Explorer options
     parser.add_argument(
         "--explorer",
         action="store_true",
         default=False,
-        help="Enable the browser-based Tool Inspector UI (HTTP transports only).",
+        help="Enable the browser-based Tool Explorer UI (HTTP transports only).",
     )
     parser.add_argument(
-        "--inspector-prefix",
-        default="/inspector",
-        help='URL prefix for the inspector (default: "/inspector").',
+        "--explorer-prefix",
+        default="/explorer",
+        help='URL prefix for the explorer UI (default: "/explorer").',
     )
     parser.add_argument(
         "--allow-execute",
         action="store_true",
         default=False,
-        help="Allow tool execution from the inspector UI.",
+        help="Allow tool execution from the explorer UI.",
     )
 
     return parser
@@ -158,7 +158,7 @@ def main() -> None:
             name=args.name,
             version=args.version,
             explorer=args.explorer,
-            inspector_prefix=args.inspector_prefix,
+            explorer_prefix=args.explorer_prefix,
             allow_execute=args.allow_execute,
         )
     except Exception:

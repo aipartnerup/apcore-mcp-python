@@ -49,7 +49,7 @@ __all__ = [
     "MCP_ELICIT_KEY",
 ]
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ def serve(
     validate_inputs: bool = False,
     metrics_collector: MetricsExporter | None = None,
     explorer: bool = False,
-    inspector_prefix: str = "/inspector",
+    explorer_prefix: str = "/explorer",
     allow_execute: bool = False,
 ) -> None:
     """Launch an MCP Server that exposes all apcore modules as tools.
@@ -91,9 +91,9 @@ def serve(
         dynamic: Reserved for future dynamic tool registration support.
         validate_inputs: Validate tool inputs against schemas before execution.
         metrics_collector: Optional MetricsCollector for Prometheus /metrics endpoint.
-        explorer: Enable the browser-based Tool Inspector UI (HTTP transports only).
-        inspector_prefix: URL prefix for the inspector (default: "/inspector").
-        allow_execute: Allow tool execution from the inspector UI.
+        explorer: Enable the browser-based Tool Explorer UI (HTTP transports only).
+        explorer_prefix: URL prefix for the explorer (default: "/explorer").
+        allow_execute: Allow tool execution from the explorer UI.
     """
     if not name:
         raise ValueError("name must not be empty")
@@ -109,8 +109,8 @@ def serve(
         valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
         if log_level.upper() not in valid_levels:
             raise ValueError(f"Unknown log level: {log_level!r}. Valid: {sorted(valid_levels)}")
-    if explorer and not inspector_prefix.startswith("/"):
-        raise ValueError("inspector_prefix must start with '/'")
+    if explorer and not explorer_prefix.startswith("/"):
+        raise ValueError("explorer_prefix must start with '/'")
 
     version = version or __version__
 
@@ -137,21 +137,21 @@ def serve(
         transport,
     )
 
-    # Build optional inspector mount for HTTP transports
+    # Build optional explorer mount for HTTP transports
     transport_lower = transport.lower()
     extra_routes = None
     if explorer and transport_lower in ("streamable-http", "sse"):
-        from apcore_mcp.inspector import create_inspector_mount
+        from apcore_mcp.explorer import create_explorer_mount
 
         extra_routes = [
-            create_inspector_mount(
+            create_explorer_mount(
                 tools,
                 router,
                 allow_execute=allow_execute,
-                inspector_prefix=inspector_prefix,
+                explorer_prefix=explorer_prefix,
             )
         ]
-        logger.info("Tool Inspector enabled at %s", inspector_prefix)
+        logger.info("Tool Explorer enabled at %s", explorer_prefix)
 
     # Select and run transport
     transport_manager = TransportManager(metrics_collector=metrics_collector)

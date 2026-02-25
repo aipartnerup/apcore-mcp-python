@@ -186,6 +186,9 @@ apcore-mcp --extensions-dir PATH [OPTIONS]
 | `--name` | `apcore-mcp` | MCP server name (max 255 chars) |
 | `--version` | package version | MCP server version string |
 | `--log-level` | `INFO` | Logging: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `--explorer` | off | Enable the browser-based Tool Explorer UI (HTTP only) |
+| `--explorer-prefix` | `/explorer` | URL prefix for the explorer UI |
+| `--allow-execute` | off | Allow tool execution from the explorer UI |
 
 Exit codes: `0` normal, `1` invalid arguments, `2` startup failure.
 
@@ -210,10 +213,35 @@ serve(
     log_level=None,              # logging level ("DEBUG", "INFO", etc.)
     validate_inputs=False,       # validate inputs against schemas
     metrics_collector=None,      # MetricsCollector for /metrics endpoint
+    explorer=False,              # enable browser-based Tool Explorer UI
+    explorer_prefix="/explorer", # URL prefix for the explorer
+    allow_execute=False,         # allow tool execution from the explorer
 )
 ```
 
 Accepts either a `Registry` or `Executor`. When a `Registry` is passed, an `Executor` is created automatically.
+
+### Tool Explorer
+
+When `explorer=True` is passed to `serve()`, a browser-based Tool Explorer UI is mounted on HTTP transports. It provides an interactive page for browsing tool schemas and testing tool execution.
+
+```python
+serve(registry, transport="streamable-http", explorer=True, allow_execute=True)
+# Open http://127.0.0.1:8000/explorer/ in a browser
+```
+
+**Endpoints:**
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /explorer/` | Interactive HTML page (self-contained, no external dependencies) |
+| `GET /explorer/tools` | JSON array of all tools with name, description, annotations |
+| `GET /explorer/tools/<name>` | Full tool detail with inputSchema |
+| `POST /explorer/tools/<name>/call` | Execute a tool (requires `allow_execute=True`) |
+
+- **HTTP transports only** (`streamable-http`, `sse`). Silently ignored for `stdio`.
+- **Execution disabled by default** — set `allow_execute=True` to enable Try-it.
+- **Custom prefix** — use `explorer_prefix="/browse"` to mount at a different path.
 
 ### `/metrics` Prometheus Endpoint
 
@@ -289,6 +317,7 @@ tools = to_openai_tools(executor)
 - **Error sanitization** — ACL errors and internal errors are sanitized; stack traces are never leaked
 - **Dynamic registration** — modules registered/unregistered at runtime are reflected immediately
 - **Dual output** — same registry powers both MCP Server and OpenAI tool definitions
+- **Tool Explorer** — browser-based UI for browsing schemas and testing tools interactively
 
 ## How It Works
 
@@ -355,6 +384,10 @@ src/apcore_mcp/
 │   └── id_normalizer.py     # Module ID normalization (dot ↔ dash)
 ├── converters/
 │   └── openai.py            # OpenAI tool definition converter
+├── explorer/
+│   ├── __init__.py          # create_explorer_mount() entry point
+│   ├── routes.py            # Starlette route handlers
+│   └── html.py              # Self-contained HTML/CSS/JS page
 └── server/
     ├── factory.py           # MCP Server creation and tool building
     ├── router.py            # Tool call → Executor routing

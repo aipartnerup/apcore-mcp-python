@@ -1,4 +1,4 @@
-"""Starlette route handlers for the MCP Tool Inspector."""
+"""Starlette route handlers for the MCP Tool Explorer."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from apcore_mcp.inspector.html import _INSPECTOR_HTML
+from apcore_mcp.explorer.html import _EXPLORER_HTML
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +49,13 @@ def _tool_detail(tool: Any) -> dict[str, Any]:
     return result
 
 
-def build_inspector_routes(
+def build_explorer_routes(
     tools: list[Any],
     router: Any,
     *,
     allow_execute: bool = False,
 ) -> list[Route]:
-    """Build Starlette routes for the MCP Tool Inspector.
+    """Build Starlette routes for the MCP Tool Explorer.
 
     Args:
         tools: List of MCP Tool objects.
@@ -63,12 +63,12 @@ def build_inspector_routes(
         allow_execute: Whether to allow tool execution via the call endpoint.
 
     Returns:
-        List of Starlette Route objects to be mounted under the inspector prefix.
+        List of Starlette Route objects to be mounted under the explorer prefix.
     """
     tools_by_name: dict[str, Any] = {t.name: t for t in tools}
 
-    async def inspector_page(request: Request) -> HTMLResponse:
-        return HTMLResponse(_INSPECTOR_HTML)
+    async def explorer_page(request: Request) -> HTMLResponse:
+        return HTMLResponse(_EXPLORER_HTML)
 
     async def list_tools(request: Request) -> JSONResponse:
         return JSONResponse([_tool_summary(t) for t in tools])
@@ -113,11 +113,11 @@ def build_inspector_routes(
                 return JSONResponse({"error": result}, status_code=500)
             return JSONResponse({"result": result})
         except Exception as exc:
-            logger.error("Inspector call_tool error for %s: %s", name, exc)
+            logger.error("Explorer call_tool error for %s: %s", name, exc)
             return JSONResponse({"error": str(exc)}, status_code=500)
 
     return [
-        Route("/", endpoint=inspector_page, methods=["GET"]),
+        Route("/", endpoint=explorer_page, methods=["GET"]),
         Route("/tools", endpoint=list_tools, methods=["GET"]),
         Route("/tools/{name:path}/call", endpoint=call_tool, methods=["POST"]),
         Route("/tools/{name:path}", endpoint=tool_detail, methods=["GET"]),
