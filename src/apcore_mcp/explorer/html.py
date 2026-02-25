@@ -46,6 +46,24 @@ _EXPLORER_HTML = """\
   .result-error { color: #f93e3e; }
   .result-success { color: #49cc90; }
   .exec-disabled { color: #888; font-size: 0.85rem; font-style: italic; margin-top: 16px; }
+  .curl-section { margin-top: 14px; }
+  .curl-block { background: #282c34; color: #abb2bf; padding: 12px; padding-right: 60px;
+                border-radius: 4px; overflow-x: auto; font-size: 0.82rem;
+                white-space: pre-wrap; word-break: break-all; position: relative;
+                font-family: monospace; margin-top: 4px; }
+  .copy-btn { position: absolute; top: 8px; right: 8px; background: #3a3f4b; color: #999;
+              border: 1px solid #555; border-radius: 3px; padding: 2px 10px;
+              font-size: 0.72rem; cursor: pointer; }
+  .copy-btn:hover { background: #4a4f5b; color: #fff; }
+  .resp-header { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  .resp-tabs { display: inline-flex; }
+  .resp-tab { padding: 3px 10px; background: #eee; border: 1px solid #ddd;
+              cursor: pointer; font-size: 0.75rem; user-select: none; }
+  .resp-tab:first-child { border-radius: 3px 0 0 3px; }
+  .resp-tab:last-child { border-radius: 0 3px 3px 0; }
+  .resp-tab.active { background: #555; color: #fff; border-color: #555; }
+  .resp-pane { display: none; }
+  .resp-pane.active { display: block; }
 </style>
 </head>
 <body>
@@ -190,10 +208,19 @@ _EXPLORER_HTML = """\
     btn.textContent = 'Executing...';
     resultArea.innerHTML = '';
 
+    var bodyStr = JSON.stringify(inputs);
+    var callUrl = window.location.origin + base + '/tools/' + encodeURIComponent(name) + '/call';
+    var curlBody = bodyStr.replace(/'/g, "'\\\\''" );
+    var curlCmd = [
+      "curl -X POST '" + callUrl + "' \\\\",
+      "  -H 'Content-Type: application/json' \\\\",
+      "  -d '" + curlBody + "'"
+    ].join("\\n");
+
     fetch(base + '/tools/' + encodeURIComponent(name) + '/call', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(inputs)
+      body: bodyStr
     })
     .then(function(r) {
       if (r.status === 403) {
@@ -212,20 +239,70 @@ _EXPLORER_HTML = """\
       btn.disabled = false;
       btn.textContent = 'Execute';
       var data = result.data;
-      // MCP CallToolResult format: {content: [...], isError: bool, _meta: {...}}
+      var html = '';
+
+      html += '<div class="curl-section">' +
+        '<span class="schema-label">cURL</span>' +
+        '<div class="curl-block"><code class="curl-cmd">' + esc(curlCmd) +
+        '</code><button class="copy-btn" id="copy-curl-btn">Copy</button></div></div>';
+
       if (data.isError) {
         var errText = (data.content || []).map(function(c) { return c.text || ''; }).join('\\n');
-        resultArea.innerHTML = '<span class="schema-label result-error">Error</span>' +
+        html += '<span class="schema-label result-error">Response &mdash; Error</span>' +
           '<pre>' + esc(errText) + '</pre>';
       } else {
-        // Parse text content blocks for display
         var texts = (data.content || []).filter(function(c) { return c.type === 'text'; });
         var display = texts.map(function(c) {
           try { return JSON.parse(c.text); } catch(e) { return c.text; }
         });
         var output = display.length === 1 ? display[0] : display;
-        resultArea.innerHTML = '<span class="schema-label result-success">Result</span>' +
-          '<pre>' + esc(JSON.stringify(output, null, 2)) + '</pre>';
+        var friendlyJson = JSON.stringify(output, null, 2);
+        var rawJson = JSON.stringify(data, null, 2);
+
+        html += '<div class="resp-header">' +
+          '<span class="schema-label result-success" style="margin:0">Response</span>' +
+          '<span class="resp-tabs">' +
+          '<span class="resp-tab active" data-tab="friendly">Result</span>' +
+          '<span class="resp-tab" data-tab="raw">Raw MCP</span>' +
+          '</span></div>' +
+          '<pre class="resp-pane active" data-pane="friendly">' + esc(friendlyJson) + '</pre>' +
+          '<pre class="resp-pane" data-pane="raw">' + esc(rawJson) + '</pre>';
+      }
+
+      resultArea.innerHTML = html;
+
+      var copyBtn = document.getElementById('copy-curl-btn');
+      if (copyBtn) {
+        copyBtn.onclick = function() {
+          var cmd = resultArea.querySelector('.curl-cmd');
+          if (cmd && navigator.clipboard) {
+            navigator.clipboard.writeText(cmd.textContent).then(function() {
+              copyBtn.textContent = 'Copied!';
+              setTimeout(function() { copyBtn.textContent = 'Copy'; }, 1500);
+            }).catch(function() {
+              copyBtn.textContent = 'Failed';
+              setTimeout(function() { copyBtn.textContent = 'Copy'; }, 1500);
+            });
+          }
+        };
+      }
+      var tabs = resultArea.querySelectorAll('.resp-tab');
+      for (var i = 0; i < tabs.length; i++) {
+        (function(tab) {
+          tab.onclick = function() {
+            var target = tab.getAttribute('data-tab');
+            var allTabs = resultArea.querySelectorAll('.resp-tab');
+            var allPanes = resultArea.querySelectorAll('.resp-pane');
+            for (var j = 0; j < allTabs.length; j++) {
+              allTabs[j].className = allTabs[j].getAttribute('data-tab') === target
+                ? 'resp-tab active' : 'resp-tab';
+            }
+            for (var j = 0; j < allPanes.length; j++) {
+              allPanes[j].className = allPanes[j].getAttribute('data-pane') === target
+                ? 'resp-pane active' : 'resp-pane';
+            }
+          };
+        })(tabs[i]);
       }
     })
     .catch(function(e) {

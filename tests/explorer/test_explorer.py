@@ -351,7 +351,33 @@ class TestTC007StdioIgnored:
 # ---------------------------------------------------------------------------
 
 
-class TestTC008CustomPrefix:
+# ---------------------------------------------------------------------------
+# TC-008: Explorer HTML contains cURL and tab UI elements
+# ---------------------------------------------------------------------------
+
+
+class TestTC008CurlAndTabs:
+    def test_explorer_page_contains_curl_css(self, explorer_app: Starlette) -> None:
+        client = TestClient(explorer_app)
+        response = client.get("/explorer/")
+        assert ".curl-block" in response.text
+        assert ".copy-btn" in response.text
+        assert ".curl-section" in response.text
+
+    def test_explorer_page_contains_tab_css(self, explorer_app: Starlette) -> None:
+        client = TestClient(explorer_app)
+        response = client.get("/explorer/")
+        assert ".resp-tab" in response.text
+        assert ".resp-pane" in response.text
+        assert ".resp-header" in response.text
+
+
+# ---------------------------------------------------------------------------
+# TC-009: Custom explorer_prefix mounts at /custom/
+# ---------------------------------------------------------------------------
+
+
+class TestTC009CustomPrefix:
     def test_custom_prefix(
         self,
         sample_tools: list[MockTool],
