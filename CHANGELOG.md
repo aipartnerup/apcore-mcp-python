@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.0] - 2026-02-27
+## [0.7.0] - 2026-02-28
 
 ### Added
 
@@ -13,9 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `JWTAuthenticator`: Configurable JWT validation with `ClaimMapping` for flexible claim-to-Identity field mapping. Supports custom algorithms, audience, issuer, and required claims.
   - `AuthMiddleware`: ASGI middleware that bridges HTTP authentication to MCP handlers via `ContextVar[Identity]`. Supports `exempt_paths` (exact match) and `exempt_prefixes` (prefix match) for unauthenticated endpoints.
   - `Authenticator` Protocol: `@runtime_checkable` protocol for custom authentication backends.
+- **Permissive auth mode**: `require_auth=False` parameter on `serve()` and `MCPServer` allows unauthenticated requests to proceed without identity instead of returning 401.
+- **`exempt_paths` parameter**: `serve()` and `MCPServer` accept `exempt_paths` for exact-path authentication bypass (e.g. `{"/health", "/metrics"}`).
 - **CLI JWT flags**: `--jwt-secret`, `--jwt-algorithm`, `--jwt-audience`, `--jwt-issuer` arguments for enabling JWT authentication from the command line.
+- **CLI `--jwt-key-file`**: Read JWT verification key from a PEM file (e.g. RS256 public key). Takes priority over `--jwt-secret` and `JWT_SECRET` env var.
+- **CLI `--jwt-require-auth` / `--no-jwt-require-auth`**: Toggle permissive auth mode from the command line.
+- **CLI `--exempt-paths`**: Comma-separated list of paths exempt from authentication.
+- **`JWT_SECRET` env var fallback**: CLI resolves JWT key in priority order: `--jwt-key-file` > `--jwt-secret` > `JWT_SECRET` environment variable.
 - **Explorer Authorization UI**: Swagger-UI-style Authorization input field in the Tool Explorer. Paste a Bearer token to authenticate tool execution requests. Generated cURL commands automatically include the Authorization header.
 - **Explorer auth enforcement**: When `authenticator` is set, tool execution via the Explorer returns 401 Unauthorized without a valid Bearer token. The Explorer UI displays a clear error message prompting the user to enter a token.
+- **Auth failure audit logging**: `AuthMiddleware` emits a `WARNING` log with the request path on authentication failure.
+- **`extract_headers()` utility**: Public helper to extract ASGI scope headers as a lowercase-key dict. Exported from `apcore_mcp.auth`.
 - **JWT authentication example**: `examples/run.py` supports `JWT_SECRET` environment variable to demonstrate JWT authentication with a sample token.
 - **PyJWT dependency**: Added `PyJWT>=2.0` to project dependencies.
 
@@ -23,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Explorer UI layout**: Redesigned from a bottom-panel layout to a Swagger-UI-style inline accordion. Each tool expands its detail, schema, and "Try it" section directly below the tool name. Only one tool can be expanded at a time. Detail is loaded once on first expand and cached.
 - **AuthMiddleware `exempt_prefixes`**: Added `exempt_prefixes` parameter for prefix-based path exemption. Explorer paths are automatically exempt when both `explorer` and `authenticator` are enabled, so the Explorer UI always loads.
+- **`extract_headers` refactored**: Moved from private `AuthMiddleware._extract_headers()` to module-level `extract_headers()` function for reuse in Explorer routes.
 
 ## [0.6.0] - 2026-02-25
 

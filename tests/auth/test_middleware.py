@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -10,7 +11,7 @@ import pytest
 from apcore import Identity
 
 from apcore_mcp.auth.jwt import JWTAuthenticator
-from apcore_mcp.auth.middleware import AuthMiddleware, auth_identity_var
+from apcore_mcp.auth.middleware import AuthMiddleware, auth_identity_var, extract_headers
 
 SECRET = "test-secret-key"
 
@@ -190,7 +191,7 @@ class TestExemptPrefixes:
             app.reset_mock()
             scope = _build_scope(path=path)
             await mw(scope, AsyncMock(), AsyncMock())
-            app.assert_called_once(), f"Expected pass-through for {path}"
+            assert app.call_count == 1, f"Expected pass-through for {path}"
 
     @pytest.mark.asyncio
     async def test_prefix_does_not_exempt_non_matching(self):
@@ -240,3 +241,89 @@ class TestNonHTTPPassthrough:
         scope = _build_scope(scope_type="lifespan")
         await mw(scope, AsyncMock(), AsyncMock())
         app.assert_called_once()
+
+
+class TestAuditLogging:
+    @pytest.mark.asyncio
+    async def test_auth_failure_logs_warning(self, caplog: pytest.LogCaptureFixture):
+        """Authentication failure emits a WARNING log with the request path."""
+        app = AsyncMock()
+        auth = JWTAuthenticator(key=SECRET)
+        mw = AuthMiddleware(app, auth)
+        sent: list[dict] = []
+
+        async def capture_send(message: dict) -> None:
+            sent.append(message)
+
+        with caplog.at_level(logging.WARNING, logger="apcore_mcp.auth.middleware"):
+            await mw(_build_scope(path="/api/data"), AsyncMock(), capture_send)
+
+        assert sent[0]["status"] == 401
+        assert any("Authentication failed for /api/data" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_auth_failure_with_invalid_token_logs_warning(self, caplog: pytest.LogCaptureFixture):
+        """Invalid token triggers WARNING log."""
+        app = AsyncMock()
+        auth = JWTAuthenticator(key=SECRET)
+        mw = AuthMiddleware(app, auth)
+        sent: list[dict] = []
+
+        async def capture_send(message: dict) -> None:
+            sent.append(message)
+
+        scope = _build_scope(path="/mcp", headers=_build_auth_header("bad.token"))
+        with caplog.at_level(logging.WARNING, logger="apcore_mcp.auth.middleware"):
+            await mw(scope, AsyncMock(), capture_send)
+
+        assert sent[0]["status"] == 401
+        assert any("Authentication failed for /mcp" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_successful_auth_does_not_log_warning(self, caplog: pytest.LogCaptureFixture):
+        """Successful authentication should not produce a WARNING log."""
+        app = AsyncMock()
+        auth = JWTAuthenticator(key=SECRET)
+        mw = AuthMiddleware(app, auth)
+
+        token = _make_token({"sub": "user-1"})
+        scope = _build_scope(headers=_build_auth_header(token))
+        with caplog.at_level(logging.WARNING, logger="apcore_mcp.auth.middleware"):
+            await mw(scope, AsyncMock(), AsyncMock())
+
+        assert not any("Authentication failed" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_permissive_mode_does_not_log_warning(self, caplog: pytest.LogCaptureFixture):
+        """Permissive mode (require_auth=False) should not log on missing token."""
+        app = AsyncMock()
+        auth = JWTAuthenticator(key=SECRET)
+        mw = AuthMiddleware(app, auth, require_auth=False)
+
+        with caplog.at_level(logging.WARNING, logger="apcore_mcp.auth.middleware"):
+            await mw(_build_scope(), AsyncMock(), AsyncMock())
+
+        assert not any("Authentication failed" in r.message for r in caplog.records)
+
+
+class TestExtractHeaders:
+    def test_extracts_headers_from_scope(self):
+        scope = {
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"authorization", b"Bearer abc"),
+            ]
+        }
+        result = extract_headers(scope)
+        assert result == {"content-type": "application/json", "authorization": "Bearer abc"}
+
+    def test_lowercases_header_keys(self):
+        scope = {"headers": [(b"X-Custom-Header", b"value")]}
+        result = extract_headers(scope)
+        assert "x-custom-header" in result
+
+    def test_empty_headers(self):
+        assert extract_headers({"headers": []}) == {}
+
+    def test_missing_headers_key(self):
+        assert extract_headers({}) == {}

@@ -80,6 +80,8 @@ def serve(
     explorer_prefix: str = "/explorer",
     allow_execute: bool = False,
     authenticator: Authenticator | None = None,
+    require_auth: bool = True,
+    exempt_paths: set[str] | None = None,
 ) -> None:
     """Launch an MCP Server that exposes all apcore modules as tools.
 
@@ -102,6 +104,9 @@ def serve(
         explorer_prefix: URL prefix for the explorer (default: "/explorer").
         allow_execute: Allow tool execution from the explorer UI.
         authenticator: Optional Authenticator for JWT/token-based auth (HTTP transports only).
+        require_auth: If True, unauthenticated requests receive 401.
+            If False, requests proceed without identity (permissive mode).
+        exempt_paths: Exact paths that bypass authentication.
     """
     if not name:
         raise ValueError("name must not be empty")
@@ -166,6 +171,10 @@ def serve(
     auth_middleware: list[tuple[type, dict]] | None = None
     if authenticator is not None and transport_lower in ("streamable-http", "sse"):
         mw_kwargs: dict[str, object] = {"authenticator": authenticator}
+        if not require_auth:
+            mw_kwargs["require_auth"] = False
+        if exempt_paths is not None:
+            mw_kwargs["exempt_paths"] = exempt_paths
         if explorer:
             mw_kwargs["exempt_prefixes"] = {explorer_prefix}
         auth_middleware = [(AuthMiddleware, mw_kwargs)]

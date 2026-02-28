@@ -7,15 +7,20 @@ Verifies the full auth pipeline:
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock
 
 import jwt as pyjwt
 import pytest
 from apcore import Executor, Identity, Registry
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.testclient import TestClient
 
 from apcore_mcp.auth.jwt import JWTAuthenticator
 from apcore_mcp.auth.middleware import AuthMiddleware, auth_identity_var
+from apcore_mcp.explorer import create_explorer_mount
 from apcore_mcp.server.factory import MCPServerFactory
 from apcore_mcp.server.router import ExecutionRouter
 
@@ -309,3 +314,197 @@ class TestBuildToolsWithAuth:
         )
         assert is_error is False
         assert json.loads(content[0]["text"])["echoed"] == "ECHO ME"
+
+
+# ---------------------------------------------------------------------------
+# Mock objects for Explorer integration tests
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _MockToolAnnotations:
+    readOnlyHint: bool | None = None  # noqa: N815
+    destructiveHint: bool | None = None  # noqa: N815
+    idempotentHint: bool | None = None  # noqa: N815
+    openWorldHint: bool | None = None  # noqa: N815
+    title: str | None = None
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        result = {}
+        if self.readOnlyHint is not None:
+            result["readOnlyHint"] = self.readOnlyHint
+        if self.destructiveHint is not None:
+            result["destructiveHint"] = self.destructiveHint
+        if self.idempotentHint is not None:
+            result["idempotentHint"] = self.idempotentHint
+        if self.openWorldHint is not None:
+            result["openWorldHint"] = self.openWorldHint
+        if self.title is not None:
+            result["title"] = self.title
+        return result
+
+
+@dataclass
+class _MockTool:
+    name: str
+    description: str
+    inputSchema: dict[str, Any]  # noqa: N815
+    annotations: _MockToolAnnotations | None = None
+
+
+# ---------------------------------------------------------------------------
+# TC-AUTH-INT-014 through TC-AUTH-INT-018: Explorer + JWT auth integration
+# ---------------------------------------------------------------------------
+
+
+class TestExplorerAuthIntegration:
+    """TC-AUTH-INT-014 through TC-AUTH-INT-018."""
+
+    @staticmethod
+    def _build_app(
+        authenticator: JWTAuthenticator,
+        allow_execute: bool = True,
+        exempt_paths: set[str] | None = None,
+    ) -> Starlette:
+        """Build a Starlette app with auth middleware and explorer mount."""
+        tools = [
+            _MockTool(
+                name="image.resize",
+                description="Resize an image",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "width": {"type": "integer"},
+                        "height": {"type": "integer"},
+                    },
+                    "required": ["width", "height"],
+                },
+                annotations=_MockToolAnnotations(readOnlyHint=False),
+            ),
+        ]
+        mock_router = AsyncMock()
+        mock_router.handle_call.return_value = (
+            [{"type": "text", "text": '{"result": "ok"}'}],
+            False,
+            "trace-int",
+        )
+
+        mount = create_explorer_mount(
+            tools,
+            mock_router,
+            allow_execute=allow_execute,
+            explorer_prefix="/explorer",
+            authenticator=authenticator,
+        )
+        mw_kwargs: dict[str, Any] = {
+            "authenticator": authenticator,
+            "exempt_prefixes": {"/explorer"},
+        }
+        if exempt_paths is not None:
+            mw_kwargs["exempt_paths"] = exempt_paths
+        app = Starlette(
+            routes=[mount],
+            middleware=[Middleware(AuthMiddleware, **mw_kwargs)],
+        )
+        return app
+
+    def test_get_explorer_page_bypasses_auth(self) -> None:
+        """TC-AUTH-INT-014: Explorer GET /explorer/ bypasses auth."""
+        auth = JWTAuthenticator(key=SECRET)
+        app = self._build_app(auth)
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.get("/explorer/")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+
+    def test_get_explorer_tools_bypasses_auth(self) -> None:
+        """TC-AUTH-INT-015: Explorer GET /explorer/tools bypasses auth."""
+        auth = JWTAuthenticator(key=SECRET)
+        app = self._build_app(auth)
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.get("/explorer/tools")
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) == 1
+
+    def test_post_call_returns_401_without_token(self) -> None:
+        """TC-AUTH-INT-016: Explorer POST /call returns 401 without token."""
+        auth = JWTAuthenticator(key=SECRET)
+        app = self._build_app(auth)
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(
+            "/explorer/tools/image.resize/call",
+            json={"width": 100, "height": 200},
+        )
+        assert response.status_code == 401
+
+    def test_post_call_sets_identity_with_valid_token(self) -> None:
+        """TC-AUTH-INT-017: Explorer POST /call sets identity with valid token."""
+        auth = JWTAuthenticator(key=SECRET)
+        tools = [
+            _MockTool(
+                name="image.resize",
+                description="Resize an image",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "width": {"type": "integer"},
+                        "height": {"type": "integer"},
+                    },
+                    "required": ["width", "height"],
+                },
+            ),
+        ]
+        captured_identity: list[Identity | None] = []
+        return_value = (
+            [{"type": "text", "text": '{"result": "ok"}'}],
+            False,
+            "trace-int",
+        )
+
+        async def capture_handle_call(name: str, args: dict) -> Any:
+            captured_identity.append(auth_identity_var.get())
+            return return_value
+
+        mock_router = AsyncMock()
+        mock_router.handle_call = capture_handle_call
+
+        mount = create_explorer_mount(
+            tools,
+            mock_router,
+            allow_execute=True,
+            explorer_prefix="/explorer",
+            authenticator=auth,
+        )
+        app = Starlette(
+            routes=[mount],
+            middleware=[
+                Middleware(AuthMiddleware, authenticator=auth, exempt_prefixes={"/explorer"}),
+            ],
+        )
+        token = _make_token({"sub": "explorer-user", "roles": ["viewer"]})
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(
+            "/explorer/tools/image.resize/call",
+            json={"width": 100, "height": 200},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200
+        assert len(captured_identity) == 1
+        assert captured_identity[0] is not None
+        assert captured_identity[0].id == "explorer-user"
+        assert captured_identity[0].roles == ("viewer",)
+
+    def test_explorer_exempt_with_custom_exempt_paths(self) -> None:
+        """TC-AUTH-INT-018: Explorer exempt even with custom exempt_paths."""
+        auth = JWTAuthenticator(key=SECRET)
+        app = self._build_app(auth, exempt_paths={"/custom-health"})
+        client = TestClient(app, raise_server_exceptions=False)
+
+        # Explorer pages should still be accessible (exempt via prefix)
+        response = client.get("/explorer/")
+        assert response.status_code == 200
+
+        response = client.get("/explorer/tools")
+        assert response.status_code == 200

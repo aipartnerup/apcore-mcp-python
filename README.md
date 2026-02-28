@@ -201,6 +201,15 @@ apcore-mcp --extensions-dir PATH [OPTIONS]
 | `--explorer` | off | Enable the browser-based Tool Explorer UI (HTTP only) |
 | `--explorer-prefix` | `/explorer` | URL prefix for the explorer UI |
 | `--allow-execute` | off | Allow tool execution from the explorer UI |
+| `--jwt-secret` | — | JWT secret key for Bearer token auth (HTTP only) |
+| `--jwt-key-file` | — | Path to PEM key file for JWT verification (e.g. RS256 public key) |
+| `--jwt-algorithm` | `HS256` | JWT signing algorithm |
+| `--jwt-audience` | — | Expected JWT audience claim |
+| `--jwt-issuer` | — | Expected JWT issuer claim |
+| `--jwt-require-auth` | on | Require valid token; use `--no-jwt-require-auth` for permissive mode |
+| `--exempt-paths` | — | Comma-separated paths exempt from auth (e.g. `/health,/metrics`) |
+
+JWT key resolution priority: `--jwt-key-file` > `--jwt-secret` > `JWT_SECRET` environment variable.
 
 Exit codes: `0` normal, `1` invalid arguments, `2` startup failure.
 
@@ -228,6 +237,9 @@ serve(
     explorer=False,              # enable browser-based Tool Explorer UI
     explorer_prefix="/explorer", # URL prefix for the explorer
     allow_execute=False,         # allow tool execution from the explorer
+    authenticator=None,          # Authenticator for JWT/token auth (HTTP only)
+    require_auth=True,           # False = permissive mode (no 401)
+    exempt_paths=None,           # exact paths that bypass auth
 )
 ```
 
@@ -254,6 +266,38 @@ serve(registry, transport="streamable-http", explorer=True, allow_execute=True)
 - **HTTP transports only** (`streamable-http`, `sse`). Silently ignored for `stdio`.
 - **Execution disabled by default** — set `allow_execute=True` to enable Try-it.
 - **Custom prefix** — use `explorer_prefix="/browse"` to mount at a different path.
+
+### JWT Authentication
+
+Optional Bearer token authentication for HTTP transports. Supports symmetric (HS256) and asymmetric (RS256) algorithms.
+
+```python
+from apcore_mcp.auth import JWTAuthenticator
+
+auth = JWTAuthenticator(key="my-secret")
+
+serve(
+    registry,
+    transport="streamable-http",
+    authenticator=auth,
+    explorer=True,
+    allow_execute=True,
+)
+```
+
+**Permissive mode** — allow unauthenticated access (identity is `None` when no token is provided):
+
+```python
+serve(registry, transport="streamable-http", authenticator=auth, require_auth=False)
+```
+
+**Path exemption** — bypass auth for specific paths:
+
+```python
+serve(registry, transport="streamable-http", authenticator=auth, exempt_paths={"/health", "/metrics"})
+```
+
+See [examples/README.md](examples/README.md) for a runnable JWT demo with a pre-generated test token.
 
 ### `/metrics` Prometheus Endpoint
 
@@ -324,12 +368,13 @@ tools = to_openai_tools(executor)
 
 - **Auto-discovery** — all modules in the extensions directory are found and exposed automatically
 - **Three transports** — stdio (default, for desktop clients), Streamable HTTP, and SSE
+- **JWT authentication** — optional Bearer token auth for HTTP transports with `JWTAuthenticator`, permissive mode, PEM key file support, and env var fallback
 - **Annotation mapping** — apcore annotations (readonly, destructive, idempotent) map to MCP ToolAnnotations
 - **Schema conversion** — JSON Schema `$ref`/`$defs` inlining, strict mode for OpenAI Structured Outputs
 - **Error sanitization** — ACL errors and internal errors are sanitized; stack traces are never leaked
 - **Dynamic registration** — modules registered/unregistered at runtime are reflected immediately
 - **Dual output** — same registry powers both MCP Server and OpenAI tool definitions
-- **Tool Explorer** — browser-based UI for browsing schemas and testing tools interactively
+- **Tool Explorer** — browser-based UI for browsing schemas and testing tools interactively, with Swagger-UI-style auth input
 
 ## How It Works
 
@@ -379,7 +424,7 @@ apcore-mcp (separate process / library call)
 git clone https://github.com/aipartnerup/apcore-mcp-python.git
 cd apcore-mcp
 pip install -e ".[dev]"
-pytest                           # 260 tests
+pytest                           # 450 tests
 pytest --cov                     # with coverage report
 ```
 
@@ -394,6 +439,11 @@ src/apcore_mcp/
 │   ├── annotations.py       # Annotation mapping (apcore → MCP/OpenAI)
 │   ├── errors.py            # Error sanitization
 │   └── id_normalizer.py     # Module ID normalization (dot ↔ dash)
+├── auth/
+│   ├── __init__.py          # Auth exports
+│   ├── protocol.py          # Authenticator protocol
+│   ├── jwt.py               # JWTAuthenticator with ClaimMapping
+│   └── middleware.py        # ASGI AuthMiddleware + extract_headers()
 ├── converters/
 │   └── openai.py            # OpenAI tool definition converter
 ├── explorer/

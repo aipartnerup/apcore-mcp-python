@@ -17,6 +17,14 @@ logger = logging.getLogger(__name__)
 auth_identity_var: ContextVar[Identity | None] = ContextVar("auth_identity", default=None)
 
 
+def extract_headers(scope: dict[str, Any]) -> dict[str, str]:
+    """Extract headers from ASGI scope as a lowercase-key dict."""
+    result: dict[str, str] = {}
+    for key_bytes, value_bytes in scope.get("headers", []):
+        result[key_bytes.decode("latin-1").lower()] = value_bytes.decode("latin-1")
+    return result
+
+
 class AuthMiddleware:
     """ASGI middleware that authenticates requests and sets ``auth_identity_var``.
 
@@ -61,10 +69,11 @@ class AuthMiddleware:
             await self._app(scope, receive, send)
             return
 
-        headers = self._extract_headers(scope)
+        headers = extract_headers(scope)
         identity = self._authenticator.authenticate(headers)
 
         if identity is None and self._require_auth:
+            logger.warning("Authentication failed for %s", path)
             await self._send_401(send)
             return
 
@@ -73,14 +82,6 @@ class AuthMiddleware:
             await self._app(scope, receive, send)
         finally:
             auth_identity_var.reset(token)
-
-    @staticmethod
-    def _extract_headers(scope: dict[str, Any]) -> dict[str, str]:
-        """Extract headers from ASGI scope as a lowercase-key dict."""
-        result: dict[str, str] = {}
-        for key_bytes, value_bytes in scope.get("headers", []):
-            result[key_bytes.decode("latin-1").lower()] = value_bytes.decode("latin-1")
-        return result
 
     @staticmethod
     async def _send_401(send: Any) -> None:

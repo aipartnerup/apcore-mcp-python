@@ -38,6 +38,8 @@ class MCPServer:
         tags: list[str] | None = None,
         prefix: str | None = None,
         authenticator: Authenticator | None = None,
+        require_auth: bool = True,
+        exempt_paths: set[str] | None = None,
     ) -> None:
         self._registry_or_executor = registry_or_executor
         self._transport = transport.lower()
@@ -50,6 +52,8 @@ class MCPServer:
         self._tags = tags
         self._prefix = prefix
         self._authenticator = authenticator
+        self._require_auth = require_auth
+        self._exempt_paths = exempt_paths
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._started = threading.Event()
@@ -113,7 +117,12 @@ class MCPServer:
         if self._authenticator is not None and self._transport in ("streamable-http", "sse"):
             from apcore_mcp.auth import AuthMiddleware
 
-            auth_middleware = [(AuthMiddleware, {"authenticator": self._authenticator})]
+            mw_kwargs: dict[str, object] = {"authenticator": self._authenticator}
+            if not self._require_auth:
+                mw_kwargs["require_auth"] = False
+            if self._exempt_paths is not None:
+                mw_kwargs["exempt_paths"] = self._exempt_paths
+            auth_middleware = [(AuthMiddleware, mw_kwargs)]
 
         transport_manager = TransportManager(metrics_collector=self._metrics_collector)
         transport_manager.set_module_count(len(tools))

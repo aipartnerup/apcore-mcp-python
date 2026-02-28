@@ -2,33 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from apcore_mcp.__main__ import main
-
-# ---------------------------------------------------------------------------
-# Stub Registry for CLI tests
-# ---------------------------------------------------------------------------
-
-
-class StubRegistry:
-    """Minimal Registry stub that the CLI creates via apcore.registry.Registry."""
-
-    def __init__(self, extensions_dir=None):
-        self.extensions_dir = extensions_dir
-
-    def discover(self):
-        return 5  # number of modules discovered
-
-    def list(self, tags=None, prefix=None):
-        return []
-
-    def get_definition(self, module_id):
-        return None
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -406,3 +386,136 @@ class TestVersionDefault:
             _run_main("--extensions-dir", str(tmp_path))
             # version not specified -> should pass None so serve() uses its own default
             assert mock_serve.call_args.kwargs["version"] is None
+
+
+# ===========================================================================
+# Test: --jwt-key-file
+# ===========================================================================
+
+
+class TestJWTKeyFile:
+    """Verify --jwt-key-file reads the PEM key from a file."""
+
+    def test_jwt_key_file_reads_content(self, tmp_path):
+        """--jwt-key-file reads key content from the file and passes it to JWTAuthenticator."""
+        key_file = tmp_path / "public.pem"
+        key_file.write_text("my-pem-key-content\n")
+
+        mock_auth_cls = MagicMock()
+        patches = _make_patches()
+        auth_module = MagicMock(JWTAuthenticator=mock_auth_cls)
+        with (
+            patches["registry_patch"],
+            patches["serve_patch"] as mock_serve,
+            patch.dict("sys.modules", {"apcore_mcp.auth": auth_module}),
+        ):
+            _run_main(
+                "--extensions-dir",
+                str(tmp_path),
+                "--jwt-key-file",
+                str(key_file),
+            )
+
+            mock_auth_cls.assert_called_once()
+            assert mock_auth_cls.call_args.kwargs["key"] == "my-pem-key-content"
+            mock_serve.assert_called_once()
+            assert mock_serve.call_args.kwargs["authenticator"] is not None
+
+    def test_jwt_key_file_not_found_exits_1(self, tmp_path, capsys):
+        """--jwt-key-file with non-existent file exits with code 1."""
+        patches = _make_patches()
+        with patches["registry_patch"], patches["serve_patch"]:
+            with pytest.raises(SystemExit) as exc_info:
+                _run_main(
+                    "--extensions-dir",
+                    str(tmp_path),
+                    "--jwt-key-file",
+                    str(tmp_path / "nonexistent.pem"),
+                )
+            assert exc_info.value.code == 1
+            captured = capsys.readouterr()
+            assert "does not exist" in captured.err
+
+    def test_jwt_key_file_takes_priority_over_secret(self, tmp_path):
+        """--jwt-key-file takes priority over --jwt-secret."""
+        key_file = tmp_path / "key.pem"
+        key_file.write_text("file-key\n")
+
+        mock_auth_cls = MagicMock()
+        patches = _make_patches()
+        auth_module = MagicMock(JWTAuthenticator=mock_auth_cls)
+        with (
+            patches["registry_patch"],
+            patches["serve_patch"],
+            patch.dict("sys.modules", {"apcore_mcp.auth": auth_module}),
+        ):
+            _run_main(
+                "--extensions-dir",
+                str(tmp_path),
+                "--jwt-key-file",
+                str(key_file),
+                "--jwt-secret",
+                "inline-secret",
+            )
+            # Should use the file key, not the inline secret
+            assert mock_auth_cls.call_args.kwargs["key"] == "file-key"
+
+
+# ===========================================================================
+# Test: JWT_SECRET env var fallback
+# ===========================================================================
+
+
+class TestJWTEnvVarFallback:
+    """Verify JWT_SECRET environment variable is used as fallback."""
+
+    def test_env_var_used_when_no_flags(self, tmp_path):
+        """JWT_SECRET env var is used when neither --jwt-secret nor --jwt-key-file is set."""
+        mock_auth_cls = MagicMock()
+        patches = _make_patches()
+        auth_module = MagicMock(JWTAuthenticator=mock_auth_cls)
+        with (
+            patches["registry_patch"],
+            patches["serve_patch"],
+            patch.dict("sys.modules", {"apcore_mcp.auth": auth_module}),
+            patch.dict(os.environ, {"JWT_SECRET": "env-secret"}, clear=False),
+        ):
+            _run_main("--extensions-dir", str(tmp_path))
+            mock_auth_cls.assert_called_once()
+            assert mock_auth_cls.call_args.kwargs["key"] == "env-secret"
+
+    def test_jwt_secret_flag_takes_priority_over_env(self, tmp_path):
+        """--jwt-secret takes priority over JWT_SECRET env var."""
+        mock_auth_cls = MagicMock()
+        patches = _make_patches()
+        auth_module = MagicMock(JWTAuthenticator=mock_auth_cls)
+        with (
+            patches["registry_patch"],
+            patches["serve_patch"],
+            patch.dict("sys.modules", {"apcore_mcp.auth": auth_module}),
+            patch.dict(os.environ, {"JWT_SECRET": "env-secret"}, clear=False),
+        ):
+            _run_main(
+                "--extensions-dir",
+                str(tmp_path),
+                "--jwt-secret",
+                "flag-secret",
+            )
+            assert mock_auth_cls.call_args.kwargs["key"] == "flag-secret"
+
+    def test_no_authenticator_when_no_key_source(self, tmp_path):
+        """No authenticator created when no --jwt-secret, --jwt-key-file, or JWT_SECRET."""
+        patches = _make_patches()
+        with (
+            patches["registry_patch"],
+            patches["serve_patch"] as mock_serve,
+            patch.dict(os.environ, {}, clear=False),
+        ):
+            # Ensure JWT_SECRET is not set
+            env_backup = os.environ.pop("JWT_SECRET", None)
+            try:
+                _run_main("--extensions-dir", str(tmp_path))
+                assert mock_serve.call_args.kwargs["authenticator"] is None
+            finally:
+                if env_backup is not None:
+                    os.environ["JWT_SECRET"] = env_backup

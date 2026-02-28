@@ -9,7 +9,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from apcore_mcp.auth.middleware import auth_identity_var
+from apcore_mcp.auth.middleware import auth_identity_var, extract_headers
 from apcore_mcp.explorer.html import _EXPLORER_HTML
 
 logger = logging.getLogger(__name__)
@@ -104,7 +104,7 @@ def build_explorer_routes(
         # here to enforce auth and inject identity into the execution context.
         identity = None
         if authenticator is not None:
-            headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in request.scope.get("headers", [])}
+            headers = extract_headers(request.scope)
             identity = authenticator.authenticate(headers)
             if identity is None:
                 return JSONResponse(

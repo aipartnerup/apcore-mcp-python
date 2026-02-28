@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -108,6 +109,23 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Expected JWT issuer claim.",
     )
+    parser.add_argument(
+        "--jwt-key-file",
+        type=Path,
+        default=None,
+        help="Path to PEM key file for JWT verification (e.g. RS256 public key).",
+    )
+    parser.add_argument(
+        "--jwt-require-auth",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require JWT authentication (default: True). Use --no-jwt-require-auth for permissive mode.",
+    )
+    parser.add_argument(
+        "--exempt-paths",
+        default=None,
+        help="Comma-separated paths exempt from auth (default: /health,/metrics).",
+    )
 
     return parser
 
@@ -170,18 +188,36 @@ def main() -> None:
     else:
         logger.info("Discovered %d module(s) in '%s'.", num_modules, extensions_dir)
 
-    # Build JWT authenticator if secret provided
+    # Resolve JWT key: --jwt-key-file → --jwt-secret → JWT_SECRET env var
+    jwt_key: str | None = None
+    if args.jwt_key_file:
+        key_path: Path = args.jwt_key_file
+        if not key_path.exists():
+            print(f"Error: --jwt-key-file '{key_path}' does not exist.", file=sys.stderr)
+            sys.exit(1)
+        jwt_key = key_path.read_text().strip()
+    elif args.jwt_secret:
+        jwt_key = args.jwt_secret
+    else:
+        jwt_key = os.environ.get("JWT_SECRET")
+
+    # Build JWT authenticator if key resolved
     authenticator = None
-    if args.jwt_secret:
+    if jwt_key:
         from apcore_mcp.auth import JWTAuthenticator
 
         authenticator = JWTAuthenticator(
-            key=args.jwt_secret,
+            key=jwt_key,
             algorithms=[args.jwt_algorithm],
             audience=args.jwt_audience,
             issuer=args.jwt_issuer,
         )
         logger.info("JWT authentication enabled (algorithm=%s)", args.jwt_algorithm)
+
+    # Parse exempt paths
+    exempt_paths_set = None
+    if args.exempt_paths:
+        exempt_paths_set = set(p.strip() for p in args.exempt_paths.split(","))
 
     # Launch the MCP server
     try:
@@ -196,6 +232,8 @@ def main() -> None:
             explorer_prefix=args.explorer_prefix,
             allow_execute=args.allow_execute,
             authenticator=authenticator,
+            require_auth=args.jwt_require_auth,
+            exempt_paths=exempt_paths_set,
         )
     except Exception:
         logger.exception("Server startup failed.")
