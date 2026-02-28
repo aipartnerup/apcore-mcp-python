@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-02-27
+
+### Added
+
+- **JWT Authentication (F-027)**: Optional JWT-based authentication for HTTP transports (`streamable-http`, `sse`). New `authenticator` parameter on `serve()` and `MCPServer`. Validates Bearer tokens, maps JWT claims to apcore `Identity`, and injects identity into `Context` for ACL enforcement.
+  - `JWTAuthenticator`: Configurable JWT validation with `ClaimMapping` for flexible claim-to-Identity field mapping. Supports custom algorithms, audience, issuer, and required claims.
+  - `AuthMiddleware`: ASGI middleware that bridges HTTP authentication to MCP handlers via `ContextVar[Identity]`. Supports `exempt_paths` (exact match) and `exempt_prefixes` (prefix match) for unauthenticated endpoints.
+  - `Authenticator` Protocol: `@runtime_checkable` protocol for custom authentication backends.
+- **CLI JWT flags**: `--jwt-secret`, `--jwt-algorithm`, `--jwt-audience`, `--jwt-issuer` arguments for enabling JWT authentication from the command line.
+- **Explorer Authorization UI**: Swagger-UI-style Authorization input field in the Tool Explorer. Paste a Bearer token to authenticate tool execution requests. Generated cURL commands automatically include the Authorization header.
+- **Explorer auth enforcement**: When `authenticator` is set, tool execution via the Explorer returns 401 Unauthorized without a valid Bearer token. The Explorer UI displays a clear error message prompting the user to enter a token.
+- **JWT authentication example**: `examples/run.py` supports `JWT_SECRET` environment variable to demonstrate JWT authentication with a sample token.
+- **PyJWT dependency**: Added `PyJWT>=2.0` to project dependencies.
+
+### Changed
+
+- **Explorer UI layout**: Redesigned from a bottom-panel layout to a Swagger-UI-style inline accordion. Each tool expands its detail, schema, and "Try it" section directly below the tool name. Only one tool can be expanded at a time. Detail is loaded once on first expand and cached.
+- **AuthMiddleware `exempt_prefixes`**: Added `exempt_prefixes` parameter for prefix-based path exemption. Explorer paths are automatically exempt when both `explorer` and `authenticator` are enabled, so the Explorer UI always loads.
+
 ## [0.6.0] - 2026-02-25
 
 ### Added
@@ -126,6 +145,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Filtering**: `tags` and `prefix` parameters for selective module exposure.
 - **260 tests**: Unit, integration, E2E, performance, and security test suites.
 
+[0.7.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.4.0...v0.5.0

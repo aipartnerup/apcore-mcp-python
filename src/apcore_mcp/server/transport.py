@@ -79,6 +79,7 @@ class TransportManager:
         host: str = "127.0.0.1",
         port: int = 8000,
         extra_routes: list[Route | Mount] | None = None,
+        middleware: list[tuple[type, dict[str, Any]]] | None = None,
     ) -> None:
         """Start MCP server with Streamable HTTP transport."""
         self._validate_host_port(host, port)
@@ -104,7 +105,10 @@ class TransportManager:
                 routes.extend(extra_routes)
             routes.append(Mount("/mcp", app=transport.handle_request))
 
-            app = Starlette(routes=routes)
+            app: Any = Starlette(routes=routes)
+            if middleware:
+                for mw_cls, mw_kwargs in middleware:
+                    app = mw_cls(app, **mw_kwargs)
 
             config = uvicorn.Config(app, host=host, port=port, log_level="info")
             uv_server = uvicorn.Server(config)
@@ -121,6 +125,7 @@ class TransportManager:
         host: str = "127.0.0.1",
         port: int = 8000,
         extra_routes: list[Route | Mount] | None = None,
+        middleware: list[tuple[type, dict[str, Any]]] | None = None,
     ) -> None:
         """Start MCP server with SSE transport (deprecated)."""
         self._validate_host_port(host, port)
@@ -156,7 +161,10 @@ class TransportManager:
             ]
         )
 
-        app = Starlette(routes=routes)
+        app: Any = Starlette(routes=routes)
+        if middleware:
+            for mw_cls, mw_kwargs in middleware:
+                app = mw_cls(app, **mw_kwargs)
 
         config = uvicorn.Config(app, host=host, port=port, log_level="info")
         uv_server = uvicorn.Server(config)

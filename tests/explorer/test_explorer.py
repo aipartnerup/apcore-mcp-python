@@ -6,10 +6,13 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock
 
+import jwt as pyjwt
 import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+from apcore_mcp.auth.jwt import JWTAuthenticator
+from apcore_mcp.auth.middleware import auth_identity_var
 from apcore_mcp.explorer import create_explorer_mount
 
 # ---------------------------------------------------------------------------
@@ -120,7 +123,7 @@ class TestTC001ExplorerPage:
         response = client.get("/explorer/")
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
-        assert "MCP Tool Explorer" in response.text
+        assert "APCore MCP Tool Explorer" in response.text
 
     def test_explorer_page_is_self_contained(self, explorer_app: Starlette) -> None:
         client = TestClient(explorer_app)
@@ -390,7 +393,7 @@ class TestTC009CustomPrefix:
         # Should be accessible at /custom/
         response = client.get("/custom/")
         assert response.status_code == 200
-        assert "MCP Tool Explorer" in response.text
+        assert "APCore MCP Tool Explorer" in response.text
 
         # /custom/tools should work
         response = client.get("/custom/tools")
@@ -410,3 +413,118 @@ class TestTC009CustomPrefix:
         # /explorer/ should 404 when custom prefix is used
         response = client.get("/explorer/")
         assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# TC-010: Explorer with authenticator injects identity on tool execution
+# ---------------------------------------------------------------------------
+
+SECRET = "explorer-test-secret"
+
+
+def _make_token(payload: dict, key: str = SECRET) -> str:
+    return pyjwt.encode(payload, key, algorithm="HS256")
+
+
+class TestTC010ExplorerAuth:
+    @pytest.fixture
+    def auth_explorer_app(self, sample_tools: list[MockTool], mock_router: AsyncMock) -> Starlette:
+        """Explorer app with authenticator enabled."""
+        authenticator = JWTAuthenticator(key=SECRET)
+        mount = create_explorer_mount(
+            sample_tools,
+            mock_router,
+            allow_execute=True,
+            explorer_prefix="/explorer",
+            authenticator=authenticator,
+        )
+        return Starlette(routes=[mount])
+
+    def test_page_loads_without_token(self, auth_explorer_app: Starlette) -> None:
+        """Explorer pages should be accessible without auth (exempt from middleware)."""
+        client = TestClient(auth_explorer_app)
+        assert client.get("/explorer/").status_code == 200
+        assert client.get("/explorer/tools").status_code == 200
+
+    def test_call_tool_sets_identity_with_token(
+        self,
+        auth_explorer_app: Starlette,
+        mock_router: AsyncMock,
+    ) -> None:
+        """When Authorization header is provided, identity should be set via ContextVar."""
+        captured_identity = []
+        return_value = mock_router.handle_call.return_value
+
+        async def capture_handle_call(name: str, args: dict) -> Any:
+            captured_identity.append(auth_identity_var.get())
+            return return_value
+
+        mock_router.handle_call = capture_handle_call
+
+        token = _make_token({"sub": "explorer-user", "roles": ["viewer"]})
+        client = TestClient(auth_explorer_app)
+        response = client.post(
+            "/explorer/tools/image.resize/call",
+            json={"width": 100, "height": 200},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200
+        assert len(captured_identity) == 1
+        assert captured_identity[0] is not None
+        assert captured_identity[0].id == "explorer-user"
+        assert captured_identity[0].roles == ("viewer",)
+
+    def test_call_tool_returns_401_without_token(
+        self,
+        auth_explorer_app: Starlette,
+        mock_router: AsyncMock,
+    ) -> None:
+        """Without Authorization header, tool execution should return 401."""
+        client = TestClient(auth_explorer_app)
+        response = client.post(
+            "/explorer/tools/image.resize/call",
+            json={"width": 100, "height": 200},
+        )
+        assert response.status_code == 401
+        data = response.json()
+        assert data["error"] == "Unauthorized"
+        assert response.headers.get("www-authenticate") == "Bearer"
+        mock_router.handle_call.assert_not_called()
+
+    def test_call_tool_returns_401_with_invalid_token(
+        self,
+        auth_explorer_app: Starlette,
+        mock_router: AsyncMock,
+    ) -> None:
+        """With an invalid token, tool execution should return 401."""
+        client = TestClient(auth_explorer_app)
+        response = client.post(
+            "/explorer/tools/image.resize/call",
+            json={"width": 100, "height": 200},
+            headers={"Authorization": "Bearer bad.token.here"},
+        )
+        assert response.status_code == 401
+        mock_router.handle_call.assert_not_called()
+
+    def test_auth_identity_var_reset_after_call(
+        self,
+        auth_explorer_app: Starlette,
+        mock_router: AsyncMock,
+    ) -> None:
+        """ContextVar should be reset after request completes."""
+        token = _make_token({"sub": "temp-user"})
+        client = TestClient(auth_explorer_app)
+        client.post(
+            "/explorer/tools/image.resize/call",
+            json={},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert auth_identity_var.get() is None
+
+    def test_html_contains_auth_bar(self, auth_explorer_app: Starlette) -> None:
+        """Explorer HTML should contain the authorization input UI."""
+        client = TestClient(auth_explorer_app)
+        response = client.get("/explorer/")
+        assert "auth-bar" in response.text
+        assert "auth-token" in response.text
+        assert "Authorization" in response.text

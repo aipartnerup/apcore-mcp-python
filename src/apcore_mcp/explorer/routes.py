@@ -9,6 +9,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
+from apcore_mcp.auth.middleware import auth_identity_var
 from apcore_mcp.explorer.html import _EXPLORER_HTML
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ def build_explorer_routes(
     router: Any,
     *,
     allow_execute: bool = False,
+    authenticator: Any | None = None,
 ) -> list[Route]:
     """Build Starlette routes for the MCP Tool Explorer.
 
@@ -61,6 +63,7 @@ def build_explorer_routes(
         router: An ExecutionRouter with async handle_call(name, arguments)
             returning (content, is_error, trace_id).
         allow_execute: Whether to allow tool execution via the call endpoint.
+        authenticator: Optional Authenticator for per-request identity injection.
 
     Returns:
         List of Starlette Route objects to be mounted under the explorer prefix.
@@ -96,6 +99,21 @@ def build_explorer_routes(
         except Exception:
             body = {}
 
+        # Authenticate request if authenticator is available.
+        # Explorer paths are exempt from AuthMiddleware, so we authenticate
+        # here to enforce auth and inject identity into the execution context.
+        identity = None
+        if authenticator is not None:
+            headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in request.scope.get("headers", [])}
+            identity = authenticator.authenticate(headers)
+            if identity is None:
+                return JSONResponse(
+                    {"error": "Unauthorized", "detail": "Missing or invalid Bearer token"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+        token = auth_identity_var.set(identity)
         try:
             content, is_error, trace_id = await router.handle_call(name, body)
             # Return MCP-compliant CallToolResult format
@@ -115,6 +133,8 @@ def build_explorer_routes(
                 },
                 status_code=500,
             )
+        finally:
+            auth_identity_var.reset(token)
 
     return [
         Route("/", endpoint=explorer_page, methods=["GET"]),

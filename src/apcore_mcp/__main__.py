@@ -87,6 +87,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Allow tool execution from the explorer UI.",
     )
 
+    # JWT authentication options
+    parser.add_argument(
+        "--jwt-secret",
+        default=None,
+        help="JWT secret key for Bearer token authentication (HTTP transports only).",
+    )
+    parser.add_argument(
+        "--jwt-algorithm",
+        default="HS256",
+        help='JWT algorithm (default: "HS256").',
+    )
+    parser.add_argument(
+        "--jwt-audience",
+        default=None,
+        help="Expected JWT audience claim.",
+    )
+    parser.add_argument(
+        "--jwt-issuer",
+        default=None,
+        help="Expected JWT issuer claim.",
+    )
+
     return parser
 
 
@@ -148,6 +170,19 @@ def main() -> None:
     else:
         logger.info("Discovered %d module(s) in '%s'.", num_modules, extensions_dir)
 
+    # Build JWT authenticator if secret provided
+    authenticator = None
+    if args.jwt_secret:
+        from apcore_mcp.auth import JWTAuthenticator
+
+        authenticator = JWTAuthenticator(
+            key=args.jwt_secret,
+            algorithms=[args.jwt_algorithm],
+            audience=args.jwt_audience,
+            issuer=args.jwt_issuer,
+        )
+        logger.info("JWT authentication enabled (algorithm=%s)", args.jwt_algorithm)
+
     # Launch the MCP server
     try:
         serve(
@@ -160,6 +195,7 @@ def main() -> None:
             explorer=args.explorer,
             explorer_prefix=args.explorer_prefix,
             allow_execute=args.allow_execute,
+            authenticator=authenticator,
         )
     except Exception:
         logger.exception("Server startup failed.")

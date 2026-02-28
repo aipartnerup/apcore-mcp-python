@@ -65,3 +65,44 @@ PYTHONPATH=./examples/binding_demo python examples/binding_demo/run.py
 | Schema definition | Pydantic `BaseModel` | YAML `input_schema` / `output_schema` |
 | Launch | CLI `--extensions-dir` | Python script with `BindingLoader` |
 | Best for | New projects | Existing projects with functions to expose |
+
+## JWT Authentication
+
+Enable JWT authentication by setting the `JWT_SECRET` environment variable:
+
+```bash
+JWT_SECRET=my-secret PYTHONPATH=./examples/binding_demo python examples/run.py
+```
+
+### Test Token
+
+Pre-generated token (secret: `my-secret`, algorithm: HS256):
+
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZW1vLXVzZXIiLCJ0eXBlIjoidXNlciIsInJvbGVzIjpbImFkbWluIl19.yOFQMlZnMZwXg6KoJX61sCm2VbCzmqtT8dFRNsOhaZM
+```
+
+Payload:
+
+```json
+{"sub": "demo-user", "type": "user", "roles": ["admin"]}
+```
+
+### Verify with cURL
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZW1vLXVzZXIiLCJ0eXBlIjoidXNlciIsInJvbGVzIjpbImFkbWluIl19.yOFQMlZnMZwXg6KoJX61sCm2VbCzmqtT8dFRNsOhaZM"
+
+# Health endpoint is exempt from auth
+curl http://localhost:8000/health
+
+# Without token → 401
+curl http://localhost:8000/mcp
+
+# With token → 200
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/mcp
+```
+
+### Explorer UI with JWT
+
+The Explorer UI at http://127.0.0.1:8000/explorer/ is exempt from JWT authentication, so it always loads. To execute tools with identity, paste the Bearer token into the **Authorization** input at the top of the page (similar to Swagger UI). The token will be included in all tool execution requests and generated cURL commands.

@@ -11,6 +11,7 @@ from apcore_mcp.adapters.annotations import AnnotationMapper
 from apcore_mcp.adapters.errors import ErrorMapper
 from apcore_mcp.adapters.id_normalizer import ModuleIDNormalizer
 from apcore_mcp.adapters.schema import SchemaConverter
+from apcore_mcp.auth import Authenticator, AuthMiddleware, ClaimMapping, JWTAuthenticator
 from apcore_mcp.constants import ERROR_CODES, MODULE_ID_PATTERN, REGISTRY_EVENTS
 from apcore_mcp.converters.openai import OpenAIConverter
 from apcore_mcp.helpers import MCP_ELICIT_KEY, MCP_PROGRESS_KEY, elicit, report_progress
@@ -31,6 +32,11 @@ __all__ = [
     "ExecutionRouter",
     "RegistryListener",
     "TransportManager",
+    # Authentication
+    "Authenticator",
+    "JWTAuthenticator",
+    "ClaimMapping",
+    "AuthMiddleware",
     # Adapters
     "AnnotationMapper",
     "SchemaConverter",
@@ -49,7 +55,7 @@ __all__ = [
     "MCP_ELICIT_KEY",
 ]
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +79,7 @@ def serve(
     explorer: bool = False,
     explorer_prefix: str = "/explorer",
     allow_execute: bool = False,
+    authenticator: Authenticator | None = None,
 ) -> None:
     """Launch an MCP Server that exposes all apcore modules as tools.
 
@@ -94,6 +101,7 @@ def serve(
         explorer: Enable the browser-based Tool Explorer UI (HTTP transports only).
         explorer_prefix: URL prefix for the explorer (default: "/explorer").
         allow_execute: Allow tool execution from the explorer UI.
+        authenticator: Optional Authenticator for JWT/token-based auth (HTTP transports only).
     """
     if not name:
         raise ValueError("name must not be empty")
@@ -149,9 +157,18 @@ def serve(
                 router,
                 allow_execute=allow_execute,
                 explorer_prefix=explorer_prefix,
+                authenticator=authenticator,
             )
         ]
         logger.info("Tool Explorer enabled at %s", explorer_prefix)
+
+    # Build auth middleware for HTTP transports
+    auth_middleware: list[tuple[type, dict]] | None = None
+    if authenticator is not None and transport_lower in ("streamable-http", "sse"):
+        mw_kwargs: dict[str, object] = {"authenticator": authenticator}
+        if explorer:
+            mw_kwargs["exempt_prefixes"] = {explorer_prefix}
+        auth_middleware = [(AuthMiddleware, mw_kwargs)]
 
     # Select and run transport
     transport_manager = TransportManager(metrics_collector=metrics_collector)
@@ -162,10 +179,12 @@ def serve(
             await transport_manager.run_stdio(server, init_options)
         elif transport_lower == "streamable-http":
             await transport_manager.run_streamable_http(
-                server, init_options, host=host, port=port, extra_routes=extra_routes
+                server, init_options, host=host, port=port, extra_routes=extra_routes, middleware=auth_middleware
             )
         elif transport_lower == "sse":
-            await transport_manager.run_sse(server, init_options, host=host, port=port, extra_routes=extra_routes)
+            await transport_manager.run_sse(
+                server, init_options, host=host, port=port, extra_routes=extra_routes, middleware=auth_middleware
+            )
         else:
             raise ValueError(f"Unknown transport: {transport!r}. Expected 'stdio', 'streamable-http', or 'sse'.")
 

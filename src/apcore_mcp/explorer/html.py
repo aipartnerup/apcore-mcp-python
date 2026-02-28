@@ -1,4 +1,4 @@
-"""Self-contained HTML page for the MCP Tool Explorer."""
+"""Self-contained HTML page for the APCore MCP Tool Explorer."""
 
 _EXPLORER_HTML = """\
 <!DOCTYPE html>
@@ -6,7 +6,7 @@ _EXPLORER_HTML = """\
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MCP Tool Explorer</title>
+<title>APCore MCP Tool Explorer</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
@@ -14,8 +14,14 @@ _EXPLORER_HTML = """\
   h1 { font-size: 1.4rem; margin-bottom: 16px; }
   .tool-list { list-style: none; }
   .tool-item { background: #fff; border: 1px solid #ddd; border-radius: 6px;
-               padding: 12px 16px; margin-bottom: 8px; cursor: pointer; }
-  .tool-item:hover { border-color: #888; }
+               margin-bottom: 8px; overflow: hidden; }
+  .tool-header { padding: 12px 16px; cursor: pointer; display: flex;
+                 align-items: flex-start; gap: 8px; }
+  .tool-header:hover { background: #fafafa; }
+  .tool-toggle { color: #999; font-size: 0.7rem; margin-top: 3px; transition: transform 0.2s; flex-shrink: 0; }
+  .tool-item.expanded .tool-toggle { transform: rotate(90deg); }
+  .tool-item.expanded { border-color: #888; }
+  .tool-summary { flex: 1; }
   .tool-name { font-weight: 600; }
   .tool-desc { color: #666; font-size: 0.9rem; margin-top: 4px; }
   .hint { display: inline-block; background: #e8e8e8; padding: 2px 8px;
@@ -23,10 +29,9 @@ _EXPLORER_HTML = """\
   .hint-readonly { background: #d4edda; color: #155724; }
   .hint-destructive { background: #f8d7da; color: #721c24; }
   .hint-idempotent { background: #cce5ff; color: #004085; }
-  .detail { background: #fff; border: 1px solid #ddd; border-radius: 6px;
-            padding: 16px; margin-top: 16px; display: none; }
-  .detail.active { display: block; }
-  .detail h2 { font-size: 1.1rem; margin-bottom: 12px; }
+  .tool-detail { display: none; padding: 0 16px 16px; border-top: 1px solid #eee; }
+  .tool-item.expanded .tool-detail { display: block; }
+  .detail-title { font-size: 1.1rem; margin: 12px 0; }
   .schema-label { font-weight: 600; margin-top: 12px; display: block; }
   pre { background: #282c34; color: #abb2bf; padding: 12px; border-radius: 4px;
         overflow-x: auto; font-size: 0.85rem; margin-top: 4px; }
@@ -46,6 +51,15 @@ _EXPLORER_HTML = """\
   .result-error { color: #f93e3e; }
   .result-success { color: #49cc90; }
   .exec-disabled { color: #888; font-size: 0.85rem; font-style: italic; margin-top: 16px; }
+  .auth-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
+              padding: 10px 14px; background: #fff; border: 1px solid #ddd;
+              border-radius: 6px; }
+  .auth-bar label { font-weight: 600; font-size: 0.85rem; white-space: nowrap; }
+  .auth-bar input { flex: 1; font-family: monospace; font-size: 0.82rem;
+                     padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; }
+  .auth-bar .auth-status { font-size: 0.75rem; padding: 2px 8px; border-radius: 3px; }
+  .auth-bar .auth-locked { background: #d4edda; color: #155724; }
+  .auth-bar .auth-unlocked { background: #f8d7da; color: #721c24; }
   .curl-section { margin-top: 14px; }
   .curl-block { background: #282c34; color: #abb2bf; padding: 12px; padding-right: 60px;
                 border-radius: 4px; overflow-x: auto; font-size: 0.82rem;
@@ -67,17 +81,41 @@ _EXPLORER_HTML = """\
 </style>
 </head>
 <body>
-<h1>MCP Tool Explorer</h1>
+<h1>APCore MCP Tool Explorer</h1>
+<div class="auth-bar" id="auth-bar">
+  <label for="auth-token">Authorization</label>
+  <input type="text" id="auth-token" placeholder="Bearer eyJhbGci...">
+  <span class="auth-status auth-unlocked" id="auth-status">No token</span>
+</div>
 <div id="loading">Loading tools...</div>
 <ul class="tool-list" id="tools"></ul>
-<div class="detail" id="detail"></div>
 <script>
 (function() {
   var base = window.location.pathname.replace(/\\/$/, '');
   var toolsEl = document.getElementById('tools');
-  var detailEl = document.getElementById('detail');
   var loadingEl = document.getElementById('loading');
+  var authInput = document.getElementById('auth-token');
+  var authStatus = document.getElementById('auth-status');
   var executeEnabled = null;
+
+  function getAuthHeaders() {
+    var token = (authInput.value || '').trim();
+    if (!token) return {};
+    if (token.toLowerCase().indexOf('bearer ') !== 0) token = 'Bearer ' + token;
+    return {'Authorization': token};
+  }
+
+  function updateAuthStatus() {
+    var token = (authInput.value || '').trim();
+    if (token) {
+      authStatus.textContent = 'Token set';
+      authStatus.className = 'auth-status auth-locked';
+    } else {
+      authStatus.textContent = 'No token';
+      authStatus.className = 'auth-status auth-unlocked';
+    }
+  }
+  authInput.addEventListener('input', updateAuthStatus);
 
   function esc(s) {
     var d = document.createElement('div');
@@ -92,7 +130,7 @@ _EXPLORER_HTML = """\
     for (var key in props) {
       if (!props.hasOwnProperty(key)) continue;
       var t = props[key].type;
-      if (props[key]['default'] != null) { // != null catches both null and undefined
+      if (props[key]['default'] != null) {
         result[key] = props[key]['default'];
       } else if (t === 'string') {
         result[key] = '';
@@ -121,23 +159,31 @@ _EXPLORER_HTML = """\
     return parts.join('');
   }
 
-  fetch(base + '/tools')
+  fetch(base + '/tools', {headers: getAuthHeaders()})
     .then(function(r) { return r.json(); })
     .then(function(tools) {
       loadingEl.style.display = 'none';
       tools.forEach(function(t) {
         var li = document.createElement('li');
         li.className = 'tool-item';
+        li.setAttribute('data-tool', t.name);
         li.innerHTML =
-          '<span class="tool-name">' + esc(t.name) + '</span> ' +
-          hintsHtml(t.annotations) +
-          '<div class="tool-desc">' + esc(t.description || '') + '</div>';
-        li.onclick = function() { loadDetail(t.name); };
+          '<div class="tool-header">' +
+            '<span class="tool-toggle">&#9654;</span>' +
+            '<div class="tool-summary">' +
+              '<span class="tool-name">' + esc(t.name) + '</span> ' +
+              hintsHtml(t.annotations) +
+              '<div class="tool-desc">' + esc(t.description || '') + '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="tool-detail"></div>';
+        li.querySelector('.tool-header').onclick = function() { toggleTool(li, t.name); };
         toolsEl.appendChild(li);
       });
+      var probeHeaders = Object.assign({'Content-Type': 'application/json'}, getAuthHeaders());
       fetch(base + '/tools/__probe__/call', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: probeHeaders,
         body: '{}'
       }).then(function(r) {
         executeEnabled = r.status !== 403;
@@ -145,14 +191,30 @@ _EXPLORER_HTML = """\
     })
     .catch(function(e) { loadingEl.textContent = 'Error: ' + e; });
 
-  function loadDetail(name) {
-    fetch(base + '/tools/' + encodeURIComponent(name))
+  function toggleTool(li, name) {
+    if (li.classList.contains('expanded')) {
+      li.classList.remove('expanded');
+      return;
+    }
+    // Collapse any other expanded tool
+    var prev = toolsEl.querySelector('.tool-item.expanded');
+    if (prev && prev !== li) prev.classList.remove('expanded');
+    li.classList.add('expanded');
+    var detailEl = li.querySelector('.tool-detail');
+    // Load detail if not yet loaded
+    if (!detailEl.getAttribute('data-loaded')) {
+      loadDetail(li, name);
+    }
+  }
+
+  function loadDetail(li, name) {
+    var detailEl = li.querySelector('.tool-detail');
+    detailEl.innerHTML = '<p style="color:#888;padding-top:12px">Loading...</p>';
+    fetch(base + '/tools/' + encodeURIComponent(name), {headers: getAuthHeaders()})
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        detailEl.className = 'detail active';
+        detailEl.setAttribute('data-loaded', '1');
         var html =
-          '<h2>' + esc(d.name) + '</h2>' +
-          '<p>' + esc(d.description || '') + '</p>' +
           '<span class="schema-label">Input Schema</span>' +
           '<pre>' + esc(JSON.stringify(d.inputSchema, null, 2)) + '</pre>';
 
@@ -161,39 +223,41 @@ _EXPLORER_HTML = """\
             '<pre>' + esc(JSON.stringify(d.annotations, null, 2)) + '</pre>';
         }
 
-        html += '<div class="try-it" id="try-it-section">' +
+        html += '<div class="try-it">' +
           '<h3>Try it</h3>' +
-          '<textarea class="input-editor" id="input-editor">' +
+          '<textarea class="input-editor">' +
           esc(JSON.stringify(defaultFromSchema(d.inputSchema), null, 2)) +
           '</textarea>' +
-          '<button class="execute-btn" id="execute-btn">Execute</button>' +
-          '<div class="result-area" id="result-area"></div>' +
+          '<button class="execute-btn">Execute</button>' +
+          '<div class="result-area"></div>' +
           '</div>';
 
         detailEl.innerHTML = html;
 
-        document.getElementById('execute-btn').onclick = function() {
-          execTool(d.name);
+        detailEl.querySelector('.execute-btn').onclick = function() {
+          execTool(li, d.name);
         };
 
         if (executeEnabled === false) {
-          var section = document.getElementById('try-it-section');
-          if (section) section.innerHTML =
+          var tryIt = detailEl.querySelector('.try-it');
+          if (tryIt) tryIt.innerHTML =
             '<p class="exec-disabled">' +
             'Tool execution is disabled. ' +
             'Launch with --allow-execute to enable.</p>';
         }
       })
       .catch(function(e) {
-        detailEl.className = 'detail active';
-        detailEl.innerHTML = '<p class="result-error">Failed to load tool details: ' + esc(e.message) + '</p>';
+        detailEl.setAttribute('data-loaded', '1');
+        detailEl.innerHTML = '<p class="result-error" style="padding-top:12px">' +
+          'Failed to load tool details: ' + esc(e.message) + '</p>';
       });
   }
 
-  function execTool(name) {
-    var btn = document.getElementById('execute-btn');
-    var editor = document.getElementById('input-editor');
-    var resultArea = document.getElementById('result-area');
+  function execTool(li, name) {
+    var detailEl = li.querySelector('.tool-detail');
+    var btn = detailEl.querySelector('.execute-btn');
+    var editor = detailEl.querySelector('.input-editor');
+    var resultArea = detailEl.querySelector('.result-area');
 
     var inputText = editor.value.trim();
     var inputs;
@@ -211,25 +275,38 @@ _EXPLORER_HTML = """\
     var bodyStr = JSON.stringify(inputs);
     var callUrl = window.location.origin + base + '/tools/' + encodeURIComponent(name) + '/call';
     var curlBody = bodyStr.replace(/'/g, "'\\\\''" );
-    var curlCmd = [
-      "curl -X POST '" + callUrl + "' \\\\",
-      "  -H 'Content-Type: application/json' \\\\",
-      "  -d '" + curlBody + "'"
-    ].join("\\n");
+    var authToken = (authInput.value || '').trim();
+    var curlLines = ["curl -X POST '" + callUrl + "' \\\\"];
+    curlLines.push("  -H 'Content-Type: application/json' \\\\");
+    if (authToken) {
+      var bearerVal = authToken.toLowerCase().indexOf('bearer ') === 0 ? authToken : 'Bearer ' + authToken;
+      curlLines.push("  -H 'Authorization: " + bearerVal + "' \\\\");
+    }
+    curlLines.push("  -d '" + curlBody + "'");
+    var curlCmd = curlLines.join("\\n");
 
+    var fetchHeaders = Object.assign({'Content-Type': 'application/json'}, getAuthHeaders());
     fetch(base + '/tools/' + encodeURIComponent(name) + '/call', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: fetchHeaders,
       body: bodyStr
     })
     .then(function(r) {
       if (r.status === 403) {
         executeEnabled = false;
-        var section = document.getElementById('try-it-section');
-        if (section) section.innerHTML =
+        var tryIt = detailEl.querySelector('.try-it');
+        if (tryIt) tryIt.innerHTML =
           '<p class="exec-disabled">' +
           'Tool execution is disabled. ' +
           'Launch with --allow-execute to enable.</p>';
+        return null;
+      }
+      if (r.status === 401) {
+        btn.disabled = false;
+        btn.textContent = 'Execute';
+        resultArea.innerHTML =
+          '<p class="result-error">401 Unauthorized \\u2014 ' +
+          'enter a valid Bearer token in the Authorization field above.</p>';
         return null;
       }
       return r.json().then(function(data) { return {status: r.status, data: data}; });
@@ -244,7 +321,7 @@ _EXPLORER_HTML = """\
       html += '<div class="curl-section">' +
         '<span class="schema-label">cURL</span>' +
         '<div class="curl-block"><code class="curl-cmd">' + esc(curlCmd) +
-        '</code><button class="copy-btn" id="copy-curl-btn">Copy</button></div></div>';
+        '</code><button class="copy-btn">Copy</button></div></div>';
 
       if (data.isError) {
         var errText = (data.content || []).map(function(c) { return c.text || ''; }).join('\\n');
@@ -271,7 +348,7 @@ _EXPLORER_HTML = """\
 
       resultArea.innerHTML = html;
 
-      var copyBtn = document.getElementById('copy-curl-btn');
+      var copyBtn = resultArea.querySelector('.copy-btn');
       if (copyBtn) {
         copyBtn.onclick = function() {
           var cmd = resultArea.querySelector('.curl-cmd');

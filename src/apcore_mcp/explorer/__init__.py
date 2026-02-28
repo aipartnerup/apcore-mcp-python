@@ -15,6 +15,7 @@ def create_explorer_mount(
     *,
     allow_execute: bool = False,
     explorer_prefix: str = "/explorer",
+    authenticator: Any | None = None,
 ) -> Mount:
     """Create a Starlette Mount for the MCP Tool Explorer.
 
@@ -23,9 +24,15 @@ def create_explorer_mount(
         router: An ExecutionRouter for executing tool calls.
         allow_execute: Whether to allow tool execution from the explorer UI.
         explorer_prefix: URL prefix for the explorer (default: "/explorer").
+        authenticator: Optional Authenticator for per-request identity in tool execution.
 
     Returns:
         A Starlette Mount that can be included in the app's route list.
     """
-    routes = build_explorer_routes(tools, router, allow_execute=allow_execute)
+    routes = build_explorer_routes(
+        tools,
+        router,
+        allow_execute=allow_execute,
+        authenticator=authenticator,
+    )
     return Mount(explorer_prefix, routes=routes)

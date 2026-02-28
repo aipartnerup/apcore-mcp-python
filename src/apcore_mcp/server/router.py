@@ -142,7 +142,8 @@ class ExecutionRouter:
 
             context_data[MCP_ELICIT_KEY] = _elicit_callback
 
-        context = Context.create(data=context_data)
+        identity = extra.get("identity") if extra is not None else None
+        context = Context.create(data=context_data, identity=identity)
 
         # Pre-execution validation
         if self._validate_inputs:

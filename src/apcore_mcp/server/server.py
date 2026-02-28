@@ -8,6 +8,7 @@ import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from apcore_mcp.auth.protocol import Authenticator
     from apcore_mcp.server.transport import MetricsExporter
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ class MCPServer:
         metrics_collector: MetricsExporter | None = None,
         tags: list[str] | None = None,
         prefix: str | None = None,
+        authenticator: Authenticator | None = None,
     ) -> None:
         self._registry_or_executor = registry_or_executor
         self._transport = transport.lower()
@@ -47,6 +49,7 @@ class MCPServer:
         self._metrics_collector = metrics_collector
         self._tags = tags
         self._prefix = prefix
+        self._authenticator = authenticator
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._started = threading.Event()
@@ -105,6 +108,13 @@ class MCPServer:
             version=version,
         )
 
+        # Build auth middleware for HTTP transports
+        auth_middleware: list[tuple[type, dict]] | None = None
+        if self._authenticator is not None and self._transport in ("streamable-http", "sse"):
+            from apcore_mcp.auth import AuthMiddleware
+
+            auth_middleware = [(AuthMiddleware, {"authenticator": self._authenticator})]
+
         transport_manager = TransportManager(metrics_collector=self._metrics_collector)
         transport_manager.set_module_count(len(tools))
 
@@ -123,6 +133,7 @@ class MCPServer:
                         init_options,
                         host=self._host,
                         port=self._port,
+                        middleware=auth_middleware,
                     ),
                 )
             elif self._transport == "sse":
@@ -132,6 +143,7 @@ class MCPServer:
                         init_options,
                         host=self._host,
                         port=self._port,
+                        middleware=auth_middleware,
                     ),
                 )
             else:

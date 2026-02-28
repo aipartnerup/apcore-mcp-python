@@ -15,6 +15,7 @@ from pydantic import AnyUrl
 
 from apcore_mcp.adapters.annotations import AnnotationMapper
 from apcore_mcp.adapters.schema import SchemaConverter
+from apcore_mcp.auth.middleware import auth_identity_var
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,11 @@ class MCPServerFactory:
 
             # Always pass session for elicitation support
             extra: dict[str, Any] = {"session": ctx.session}
+
+            # Bridge authenticated identity from ASGI middleware
+            identity = auth_identity_var.get()
+            if identity is not None:
+                extra["identity"] = identity
 
             if progress_token is not None:
 
