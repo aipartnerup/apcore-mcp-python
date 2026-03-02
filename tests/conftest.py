@@ -23,6 +23,7 @@ class ModuleAnnotations:
     idempotent: bool = False
     requires_approval: bool = False
     open_world: bool = True
+    streaming: bool = False
 
 
 @dataclass

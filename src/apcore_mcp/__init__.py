@@ -8,6 +8,7 @@ from collections.abc import Callable
 
 from apcore_mcp._utils import resolve_executor, resolve_registry
 from apcore_mcp.adapters.annotations import AnnotationMapper
+from apcore_mcp.adapters.approval import ElicitationApprovalHandler
 from apcore_mcp.adapters.errors import ErrorMapper
 from apcore_mcp.adapters.id_normalizer import ModuleIDNormalizer
 from apcore_mcp.adapters.schema import SchemaConverter
@@ -39,6 +40,7 @@ __all__ = [
     "AuthMiddleware",
     # Adapters
     "AnnotationMapper",
+    "ElicitationApprovalHandler",
     "SchemaConverter",
     "ErrorMapper",
     "ModuleIDNormalizer",
@@ -55,7 +57,7 @@ __all__ = [
     "MCP_ELICIT_KEY",
 ]
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,7 @@ def serve(
     authenticator: Authenticator | None = None,
     require_auth: bool = True,
     exempt_paths: set[str] | None = None,
+    approval_handler: object | None = None,
 ) -> None:
     """Launch an MCP Server that exposes all apcore modules as tools.
 
@@ -107,6 +110,7 @@ def serve(
         require_auth: If True, unauthenticated requests receive 401.
             If False, requests proceed without identity (permissive mode).
         exempt_paths: Exact paths that bypass authentication.
+        approval_handler: Optional approval handler for runtime approval support.
     """
     if not name:
         raise ValueError("name must not be empty")
@@ -131,7 +135,7 @@ def serve(
         logging.getLogger("apcore_mcp").setLevel(getattr(logging, log_level.upper()))
 
     registry = resolve_registry(registry_or_executor)
-    executor = resolve_executor(registry_or_executor)
+    executor = resolve_executor(registry_or_executor, approval_handler=approval_handler)
 
     # Build MCP server components
     factory = MCPServerFactory()

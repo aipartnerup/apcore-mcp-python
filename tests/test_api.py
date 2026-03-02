@@ -139,7 +139,7 @@ class TestResolveExecutor:
 
         try:
             result = resolve_executor(registry)
-            mock_executor_cls.assert_called_once_with(registry)
+            mock_executor_cls.assert_called_once_with(registry, approval_handler=None)
             assert result is mock_executor_instance
         finally:
             del sys.modules["apcore.executor"]

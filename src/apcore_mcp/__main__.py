@@ -127,6 +127,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Comma-separated paths exempt from auth (default: /health,/metrics).",
     )
 
+    # Approval options
+    parser.add_argument(
+        "--approval",
+        choices=("elicit", "auto-approve", "always-deny", "off"),
+        default="off",
+        help='Approval handler mode (default: "off"). '
+        '"elicit" uses MCP elicitation, '
+        '"auto-approve" auto-approves all requests (dev/testing), '
+        '"always-deny" rejects all requests.',
+    )
+
     return parser
 
 
@@ -219,6 +230,24 @@ def main() -> None:
     if args.exempt_paths:
         exempt_paths_set = set(p.strip() for p in args.exempt_paths.split(","))
 
+    # Build approval handler
+    approval_handler = None
+    if args.approval == "elicit":
+        from apcore_mcp.adapters.approval import ElicitationApprovalHandler
+
+        approval_handler = ElicitationApprovalHandler()
+        logger.info("Approval handler: elicit (MCP elicitation)")
+    elif args.approval == "auto-approve":
+        from apcore.approval import AutoApproveHandler
+
+        approval_handler = AutoApproveHandler()
+        logger.info("Approval handler: auto-approve (dev/testing)")
+    elif args.approval == "always-deny":
+        from apcore.approval import AlwaysDenyHandler
+
+        approval_handler = AlwaysDenyHandler()
+        logger.info("Approval handler: always-deny (enforcement)")
+
     # Launch the MCP server
     try:
         serve(
@@ -234,6 +263,7 @@ def main() -> None:
             authenticator=authenticator,
             require_auth=args.jwt_require_auth,
             exempt_paths=exempt_paths_set,
+            approval_handler=approval_handler,
         )
     except Exception:
         logger.exception("Server startup failed.")

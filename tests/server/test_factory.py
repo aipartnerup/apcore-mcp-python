@@ -267,6 +267,68 @@ class TestRegisterHandlers:
         assert result.tools[0].name == "test.tool"
 
 
+class TestBuildToolAIIntentMetadata:
+    """Tests for AI intent metadata in tool descriptions."""
+
+    @pytest.fixture
+    def factory(self) -> MCPServerFactory:
+        return MCPServerFactory()
+
+    def test_when_to_use_in_description(self, factory: MCPServerFactory) -> None:
+        """Tool built with metadata containing x-when-to-use includes it in description."""
+        descriptor = ModuleDescriptor(
+            module_id="ai.tool",
+            description="An AI tool",
+            input_schema={"type": "object", "properties": {}},
+            output_schema={},
+            metadata={"x-when-to-use": "Use when the user needs image generation"},
+        )
+        tool = factory.build_tool(descriptor)
+        assert "When To Use: Use when the user needs image generation" in tool.description
+
+    def test_multiple_intent_keys_in_description(self, factory: MCPServerFactory) -> None:
+        """Tool built with multiple intent keys includes all in description."""
+        descriptor = ModuleDescriptor(
+            module_id="ai.tool",
+            description="An AI tool",
+            input_schema={"type": "object", "properties": {}},
+            output_schema={},
+            metadata={
+                "x-when-to-use": "Use for image generation",
+                "x-common-mistakes": "Do not pass raw bytes",
+                "x-workflow-hints": "Call after preprocessing",
+            },
+        )
+        tool = factory.build_tool(descriptor)
+        assert "When To Use: Use for image generation" in tool.description
+        assert "Common Mistakes: Do not pass raw bytes" in tool.description
+        assert "Workflow Hints: Call after preprocessing" in tool.description
+
+    def test_empty_metadata_unchanged_description(self, factory: MCPServerFactory) -> None:
+        """Tool built with empty metadata has unchanged description."""
+        descriptor = ModuleDescriptor(
+            module_id="plain.tool",
+            description="A plain tool",
+            input_schema={"type": "object", "properties": {}},
+            output_schema={},
+            metadata={},
+        )
+        tool = factory.build_tool(descriptor)
+        assert tool.description == "A plain tool"
+
+    def test_non_intent_metadata_excluded(self, factory: MCPServerFactory) -> None:
+        """Non-intent metadata keys are NOT included in description."""
+        descriptor = ModuleDescriptor(
+            module_id="custom.tool",
+            description="A custom tool",
+            input_schema={"type": "object", "properties": {}},
+            output_schema={},
+            metadata={"custom-key": "some value", "x-internal": "hidden"},
+        )
+        tool = factory.build_tool(descriptor)
+        assert tool.description == "A custom tool"
+
+
 class TestBuildToolStreamingMeta:
     """Tests for build_tool with streaming annotations."""
 

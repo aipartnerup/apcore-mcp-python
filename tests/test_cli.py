@@ -519,3 +519,64 @@ class TestJWTEnvVarFallback:
             finally:
                 if env_backup is not None:
                     os.environ["JWT_SECRET"] = env_backup
+
+
+# ===========================================================================
+# Test: --approval flag
+# ===========================================================================
+
+
+class TestApprovalFlag:
+    """Verify --approval CLI flag creates the correct handler."""
+
+    def test_approval_elicit_creates_handler(self, tmp_path):
+        """--approval elicit creates ElicitationApprovalHandler."""
+        patches = _make_patches()
+        with patches["registry_patch"], patches["serve_patch"] as mock_serve:
+            _run_main("--extensions-dir", str(tmp_path), "--approval", "elicit")
+
+            mock_serve.assert_called_once()
+            handler = mock_serve.call_args.kwargs["approval_handler"]
+            assert handler is not None
+            from apcore_mcp.adapters.approval import ElicitationApprovalHandler
+
+            assert isinstance(handler, ElicitationApprovalHandler)
+
+    def test_approval_auto_approve_creates_handler(self, tmp_path):
+        """--approval auto-approve creates AutoApproveHandler."""
+        mock_auto_cls = MagicMock()
+        patches = _make_patches()
+        with (
+            patches["registry_patch"],
+            patches["serve_patch"] as mock_serve,
+            patch("apcore_mcp.__main__.AutoApproveHandler", mock_auto_cls, create=True),
+            patch.dict("sys.modules", {"apcore.approval": MagicMock(AutoApproveHandler=mock_auto_cls)}),
+        ):
+            _run_main("--extensions-dir", str(tmp_path), "--approval", "auto-approve")
+
+            mock_serve.assert_called_once()
+            assert mock_serve.call_args.kwargs["approval_handler"] is not None
+
+    def test_approval_always_deny_creates_handler(self, tmp_path):
+        """--approval always-deny creates AlwaysDenyHandler."""
+        mock_deny_cls = MagicMock()
+        patches = _make_patches()
+        with (
+            patches["registry_patch"],
+            patches["serve_patch"] as mock_serve,
+            patch("apcore_mcp.__main__.AlwaysDenyHandler", mock_deny_cls, create=True),
+            patch.dict("sys.modules", {"apcore.approval": MagicMock(AlwaysDenyHandler=mock_deny_cls)}),
+        ):
+            _run_main("--extensions-dir", str(tmp_path), "--approval", "always-deny")
+
+            mock_serve.assert_called_once()
+            assert mock_serve.call_args.kwargs["approval_handler"] is not None
+
+    def test_approval_off_no_handler(self, tmp_path):
+        """Default (no --approval flag) creates no handler."""
+        patches = _make_patches()
+        with patches["registry_patch"], patches["serve_patch"] as mock_serve:
+            _run_main("--extensions-dir", str(tmp_path))
+
+            mock_serve.assert_called_once()
+            assert mock_serve.call_args.kwargs["approval_handler"] is None

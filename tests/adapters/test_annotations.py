@@ -157,3 +157,37 @@ class TestAnnotationMapper:
 
         # All-default annotations should return empty string
         assert result == ""
+
+    # ── Streaming annotation ────────────────────────────────────────────
+
+    def test_default_annotations_contains_streaming(self) -> None:
+        """DEFAULT_ANNOTATIONS contains streaming key."""
+        from apcore_mcp.adapters.annotations import DEFAULT_ANNOTATIONS
+
+        assert "streaming" in DEFAULT_ANNOTATIONS
+        assert DEFAULT_ANNOTATIONS["streaming"] is False
+
+    def test_description_suffix_includes_streaming_true(self, mapper: AnnotationMapper) -> None:
+        """to_description_suffix includes streaming=true when annotation has streaming=True."""
+        from dataclasses import dataclass
+
+        @dataclass(frozen=True)
+        class StreamAnnotations:
+            readonly: bool = False
+            destructive: bool = False
+            idempotent: bool = False
+            requires_approval: bool = False
+            open_world: bool = True
+            streaming: bool = True
+
+        annotations = StreamAnnotations()
+        result = mapper.to_description_suffix(annotations)
+
+        assert "streaming=true" in result.lower()
+
+    def test_to_mcp_annotations_unchanged_no_streaming(self, mapper: AnnotationMapper) -> None:
+        """to_mcp_annotations does not include streaming (MCP ToolAnnotations has no streaming field)."""
+        annotations = ModuleAnnotations()
+        result = mapper.to_mcp_annotations(annotations)
+
+        assert "streaming" not in result

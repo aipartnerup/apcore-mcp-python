@@ -180,6 +180,20 @@ class ExecutionRouter:
         # Non-streaming path
         return await self._handle_call_async(tool_name, arguments, context=context)
 
+    @staticmethod
+    def _build_error_text(error_info: dict[str, Any]) -> str:
+        """Build error text content, appending AI guidance fields as structured JSON when present.
+
+        Guidance keys use camelCase to match MCP convention and TypeScript output.
+        """
+        text = error_info["message"]
+        guidance = {
+            k: error_info[k] for k in ("retryable", "aiGuidance", "userFixable", "suggestion") if k in error_info
+        }
+        if guidance:
+            text += "\n\n" + json.dumps(guidance)
+        return text
+
     async def _handle_call_async(
         self,
         tool_name: str,
@@ -199,7 +213,7 @@ class ExecutionRouter:
         except Exception as error:
             logger.error("handle_call error for %s: %s", tool_name, error)
             error_info = self._error_mapper.to_mcp_error(error)
-            return ([{"type": "text", "text": error_info["message"]}], True, None)
+            return ([{"type": "text", "text": self._build_error_text(error_info)}], True, None)
 
     async def _handle_stream(
         self,
@@ -248,4 +262,4 @@ class ExecutionRouter:
         except Exception as error:
             logger.error("handle_call stream error for %s: %s", tool_name, error)
             error_info = self._error_mapper.to_mcp_error(error)
-            return ([{"type": "text", "text": error_info["message"]}], True, None)
+            return ([{"type": "text", "text": self._build_error_text(error_info)}], True, None)

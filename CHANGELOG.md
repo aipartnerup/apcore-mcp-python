@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-03-02
+
+### Added
+
+- **Approval system (F-028)**: Full runtime approval support via `ElicitationApprovalHandler` that bridges MCP elicitation to apcore's approval system. New `approval_handler` parameter on `serve()`. Supports `request_approval()` and `check_approval()` methods.
+  - `ElicitationApprovalHandler`: Presents approval requests to users via MCP elicitation. Maps elicit actions (`accept`/`decline`/`cancel`) to `ApprovalResult` statuses.
+  - CLI `--approval` flag with choices: `elicit`, `auto-approve`, `always-deny`, `off` (default).
+- **Approval error codes**: `APPROVAL_DENIED`, `APPROVAL_TIMEOUT`, `APPROVAL_PENDING` added to `ERROR_CODES`.
+- **Enhanced error responses with AI guidance**: `ErrorMapper` now extracts `retryable`, `ai_guidance`, `user_fixable`, and `suggestion` fields from apcore `ModuleError` and includes non-None values in error response dicts. `ExecutionRouter` appends AI guidance as structured JSON to error text content for AI agent consumption.
+- **AI intent metadata in tool descriptions**: `MCPServerFactory.build_tool()` reads `descriptor.metadata` for AI intent keys (`x-when-to-use`, `x-when-not-to-use`, `x-common-mistakes`, `x-workflow-hints`) and appends them to tool descriptions for agent visibility.
+- **Streaming annotation**: `DEFAULT_ANNOTATIONS` now includes `streaming` field. `AnnotationMapper.to_description_suffix()` includes `streaming=true` when the annotation is set.
+
+### Changed
+
+- **`APPROVAL_TIMEOUT` auto-retryable**: `ErrorMapper` sets `retryable=True` for `APPROVAL_TIMEOUT` errors, signaling to AI agents that the operation can be retried.
+- **`APPROVAL_PENDING` includes `approval_id`**: `ErrorMapper` extracts `approval_id` from error details for `APPROVAL_PENDING` errors.
+- **Error text content enriched**: Router error text now includes AI guidance fields as a structured JSON appendix when present, enabling AI agents to parse retry/fix hints.
+
 ## [0.7.0] - 2026-02-28
 
 ### Added
@@ -154,6 +172,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Filtering**: `tags` and `prefix` parameters for selective module exposure.
 - **260 tests**: Unit, integration, E2E, performance, and security test suites.
 
+[0.8.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.5.0...v0.5.1

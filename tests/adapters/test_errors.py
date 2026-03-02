@@ -265,3 +265,108 @@ class TestErrorMapper:
         assert "RuntimeError" not in result["message"]
         # Should be generic message
         assert result["message"] == "Internal error occurred"
+
+    # ── AI guidance fields ──────────────────────────────────────────────
+
+    def test_ai_guidance_retryable(self, mapper: ErrorMapper) -> None:
+        """retryable=True appears in result when set on the error."""
+        error = ModuleError(
+            code="MODULE_EXECUTE_ERROR",
+            message="Transient failure",
+        )
+        error.retryable = True
+        result = mapper.to_mcp_error(error)
+
+        assert result["retryable"] is True
+
+    def test_ai_guidance_string(self, mapper: ErrorMapper) -> None:
+        """aiGuidance string appears in result when set on the error."""
+        error = ModuleError(
+            code="MODULE_EXECUTE_ERROR",
+            message="Bad input",
+        )
+        error.ai_guidance = "Try providing the field in ISO-8601 format"
+        result = mapper.to_mcp_error(error)
+
+        assert result["aiGuidance"] == "Try providing the field in ISO-8601 format"
+
+    def test_ai_guidance_user_fixable_and_suggestion(self, mapper: ErrorMapper) -> None:
+        """userFixable and suggestion appear in result when set."""
+        error = ModuleError(
+            code="GENERAL_INVALID_INPUT",
+            message="Missing required field",
+        )
+        error.user_fixable = True
+        error.suggestion = "Add the 'name' field to your input"
+        result = mapper.to_mcp_error(error)
+
+        assert result["userFixable"] is True
+        assert result["suggestion"] == "Add the 'name' field to your input"
+
+    def test_ai_guidance_fields_omitted_when_none(self, mapper: ErrorMapper) -> None:
+        """AI guidance fields are omitted when not set (None)."""
+        error = ModuleError(
+            code="MODULE_EXECUTE_ERROR",
+            message="Some error",
+        )
+        # No AI guidance fields set — they should not appear in result
+        result = mapper.to_mcp_error(error)
+
+        assert "retryable" not in result
+        assert "aiGuidance" not in result
+        assert "userFixable" not in result
+        assert "suggestion" not in result
+
+    # ── Approval error handling ─────────────────────────────────────────
+
+    def test_approval_denied_passes_through_message_and_reason(self, mapper: ErrorMapper) -> None:
+        """APPROVAL_DENIED passes through message and reason."""
+        error = ModuleError(
+            code="APPROVAL_DENIED",
+            message="User denied the operation",
+            details={"reason": "Not authorized for production"},
+        )
+        result = mapper.to_mcp_error(error)
+
+        assert result["is_error"] is True
+        assert result["error_type"] == "APPROVAL_DENIED"
+        assert result["message"] == "User denied the operation"
+        assert result["details"]["reason"] == "Not authorized for production"
+
+    def test_approval_timeout_marks_retryable(self, mapper: ErrorMapper) -> None:
+        """APPROVAL_TIMEOUT marks retryable=True in response."""
+        error = ModuleError(
+            code="APPROVAL_TIMEOUT",
+            message="Approval timed out after 60s",
+        )
+        result = mapper.to_mcp_error(error)
+
+        assert result["is_error"] is True
+        assert result["error_type"] == "APPROVAL_TIMEOUT"
+        assert result["retryable"] is True
+
+    def test_approval_pending_includes_approval_id(self, mapper: ErrorMapper) -> None:
+        """APPROVAL_PENDING includes approvalId in details (camelCase output)."""
+        error = ModuleError(
+            code="APPROVAL_PENDING",
+            message="Awaiting approval",
+            details={"approval_id": "apr-123"},
+        )
+        result = mapper.to_mcp_error(error)
+
+        assert result["is_error"] is True
+        assert result["error_type"] == "APPROVAL_PENDING"
+        assert result["details"]["approvalId"] == "apr-123"
+
+    def test_approval_pending_without_approval_id_has_none_details(self, mapper: ErrorMapper) -> None:
+        """APPROVAL_PENDING without approval_id narrows details to None."""
+        error = ModuleError(
+            code="APPROVAL_PENDING",
+            message="Awaiting approval",
+            details={"internal_state": "should not leak"},
+        )
+        result = mapper.to_mcp_error(error)
+
+        assert result["is_error"] is True
+        assert result["error_type"] == "APPROVAL_PENDING"
+        assert result["details"] is None

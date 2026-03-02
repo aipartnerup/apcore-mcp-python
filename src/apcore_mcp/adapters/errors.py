@@ -45,6 +45,16 @@ class ErrorMapper:
             "details": None,
         }
 
+    # Map apcore ModuleError attribute names (snake_case) to MCP wire format (camelCase).
+    # The wire format uses camelCase to match MCP convention and TypeScript output.
+    # apcore input: error.ai_guidance → MCP output: result["aiGuidance"]
+    _AI_GUIDANCE_FIELDS: dict[str, str] = {
+        "retryable": "retryable",
+        "ai_guidance": "aiGuidance",
+        "user_fixable": "userFixable",
+        "suggestion": "suggestion",
+    }
+
     def _handle_apcore_error(self, error: Exception) -> dict[str, Any]:
         """Handle known apcore errors."""
         code: str = getattr(error, "code", "UNKNOWN")
@@ -73,20 +83,71 @@ class ErrorMapper:
         # Schema validation errors need special formatting
         if code == ERROR_CODES["SCHEMA_VALIDATION_ERROR"] and details is not None:
             formatted_message = self._format_validation_errors(details.get("errors", []))
-            return {
+            result: dict[str, Any] = {
                 "is_error": True,
                 "error_type": code,
                 "message": formatted_message if formatted_message else message,
                 "details": details,
             }
+            self._attach_ai_guidance(error, result)
+            return result
+
+        # Approval errors: pass through with specific handling
+        if code == ERROR_CODES["APPROVAL_PENDING"]:
+            # Narrow details to only approvalId; drop everything else.
+            # apcore uses snake_case (approval_id); output uses camelCase (approvalId) for MCP convention.
+            narrowed = {"approvalId": details["approval_id"]} if details and "approval_id" in details else None
+            result = {
+                "is_error": True,
+                "error_type": code,
+                "message": message,
+                "details": narrowed,
+            }
+            self._attach_ai_guidance(error, result)
+            return result
+
+        if code == ERROR_CODES["APPROVAL_TIMEOUT"]:
+            result = {
+                "is_error": True,
+                "error_type": code,
+                "message": message,
+                "details": details,
+                "retryable": True,
+            }
+            self._attach_ai_guidance(error, result)
+            return result
+
+        if code == ERROR_CODES["APPROVAL_DENIED"]:
+            reason = details.get("reason") if details else None
+            result = {
+                "is_error": True,
+                "error_type": code,
+                "message": message,
+                "details": {"reason": reason} if reason else details,
+            }
+            self._attach_ai_guidance(error, result)
+            return result
 
         # All other apcore errors: pass through message and details
-        return {
+        result = {
             "is_error": True,
             "error_type": code,
             "message": message,
             "details": details,
         }
+        self._attach_ai_guidance(error, result)
+        return result
+
+    def _attach_ai_guidance(self, error: Exception, result: dict[str, Any]) -> None:
+        """Extract AI guidance fields from error and attach non-None values to result.
+
+        Reads snake_case attributes from the apcore error and writes camelCase
+        keys to the MCP result dict (matching MCP/TypeScript convention).
+        """
+        for src_field, dest_field in self._AI_GUIDANCE_FIELDS.items():
+            value = getattr(error, src_field, None)
+            if value is not None and dest_field not in result:
+                result[dest_field] = value
 
     def _format_validation_errors(self, errors: list[dict[str, Any]]) -> str:
         """Format SchemaValidationError field-level errors into readable message."""

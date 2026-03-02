@@ -675,3 +675,40 @@ class TestExecutionRouter:
 
         assert is_error is True
         assert "nonexistent.module" in content[0]["text"]
+
+    # ── Tests for AI guidance fields in error text ──────────────────────
+
+    async def test_ai_guidance_fields_surfaced_in_error_text(self) -> None:
+        """AI guidance fields are appended as JSON to error text content."""
+        error = StubModuleError(
+            code="MODULE_EXECUTE_ERROR",
+            message="Transient failure",
+        )
+        error.retryable = True  # type: ignore[attr-defined]
+        error.ai_guidance = "Retry after 5 seconds"  # type: ignore[attr-defined]
+
+        executor = StubExecutor(error=error)
+        router = ExecutionRouter(executor)
+
+        content, is_error, trace_id = await router.handle_call("some.module", {})
+
+        assert is_error is True
+        text = content[0]["text"]
+        assert "Transient failure" in text
+        # AI guidance appended as JSON after the message
+        assert '"retryable": true' in text
+        assert '"aiGuidance": "Retry after 5 seconds"' in text
+
+    async def test_error_text_without_ai_guidance_is_plain_message(self) -> None:
+        """Error text without AI guidance fields is just the message (no JSON appendix)."""
+        error = StubModuleError(
+            code="MODULE_EXECUTE_ERROR",
+            message="Simple failure",
+        )
+        executor = StubExecutor(error=error)
+        router = ExecutionRouter(executor)
+
+        content, is_error, trace_id = await router.handle_call("some.module", {})
+
+        assert is_error is True
+        assert content[0]["text"] == "Simple failure"

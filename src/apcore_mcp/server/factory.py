@@ -20,6 +20,9 @@ from apcore_mcp.auth.middleware import auth_identity_var
 logger = logging.getLogger(__name__)
 
 
+_AI_INTENT_KEYS = ("x-when-to-use", "x-when-not-to-use", "x-common-mistakes", "x-workflow-hints")
+
+
 class MCPServerFactory:
     """Creates and configures MCP Server instances from apcore Registry."""
 
@@ -88,9 +91,21 @@ class MCPServerFactory:
                 meta = {}
             meta["streaming"] = True
 
+        # Append AI intent metadata to description for agent visibility
+        description = descriptor.description
+        metadata = getattr(descriptor, "metadata", None) or {}
+        intent_parts = []
+        for key in _AI_INTENT_KEYS:
+            val = metadata.get(key)
+            if val:
+                label = key.replace("x-", "").replace("-", " ").title()
+                intent_parts.append(f"{label}: {val}")
+        if intent_parts:
+            description += "\n\n" + "\n".join(intent_parts)
+
         return mcp_types.Tool(
             name=descriptor.module_id,
-            description=descriptor.description,
+            description=description,
             inputSchema=input_schema,
             annotations=tool_annotations,
             _meta=meta,

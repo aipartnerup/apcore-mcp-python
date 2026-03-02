@@ -10,6 +10,7 @@ DEFAULT_ANNOTATIONS = {
     "idempotent": False,
     "requires_approval": False,
     "open_world": True,
+    "streaming": False,
 }
 
 
@@ -83,6 +84,8 @@ class AnnotationMapper:
             parts.append(f"requires_approval={str(annotations.requires_approval).lower()}")
         if annotations.open_world != DEFAULT_ANNOTATIONS["open_world"]:
             parts.append(f"open_world={str(annotations.open_world).lower()}")
+        if getattr(annotations, "streaming", False) != DEFAULT_ANNOTATIONS["streaming"]:
+            parts.append(f"streaming={str(getattr(annotations, 'streaming', False)).lower()}")
 
         if not parts:
             return ""
