@@ -38,7 +38,7 @@ pip install apcore-mcp
 
 That's it. Your existing project requires no changes.
 
-Requires Python 3.10+ and `apcore >= 0.5.0`.
+Requires Python 3.11+ and `apcore >= 0.7.0`.
 
 ## Quick Start
 
@@ -208,6 +208,7 @@ apcore-mcp --extensions-dir PATH [OPTIONS]
 | `--jwt-issuer` | — | Expected JWT issuer claim |
 | `--jwt-require-auth` | on | Require valid token; use `--no-jwt-require-auth` for permissive mode |
 | `--exempt-paths` | — | Comma-separated paths exempt from auth (e.g. `/health,/metrics`) |
+| `--approval` | `off` | Approval handler: `elicit`, `auto-approve`, `always-deny`, or `off` |
 
 JWT key resolution priority: `--jwt-key-file` > `--jwt-secret` > `JWT_SECRET` environment variable.
 
@@ -240,6 +241,7 @@ serve(
     authenticator=None,          # Authenticator for JWT/token auth (HTTP only)
     require_auth=True,           # False = permissive mode (no 401)
     exempt_paths=None,           # exact paths that bypass auth
+    approval_handler=None,       # approval handler for runtime approval
 )
 ```
 
@@ -298,6 +300,53 @@ serve(registry, transport="streamable-http", authenticator=auth, exempt_paths={"
 ```
 
 See [examples/README.md](examples/README.md) for a runnable JWT demo with a pre-generated test token.
+
+### Approval Mechanism
+
+Optional runtime approval for tool execution. Bridges MCP elicitation to apcore's approval system.
+
+```python
+from apcore_mcp.adapters.approval import ElicitationApprovalHandler
+
+handler = ElicitationApprovalHandler()
+
+serve(
+    registry,
+    transport="streamable-http",
+    approval_handler=handler,
+    explorer=True,
+)
+```
+
+**Built-in handlers:**
+
+| Handler | Description |
+|---------|-------------|
+| `ElicitationApprovalHandler` | Prompts the MCP client for user confirmation via elicitation |
+| `AutoApproveHandler` | Auto-approves all requests (dev/testing only) |
+| `AlwaysDenyHandler` | Rejects all requests (enforcement) |
+
+CLI usage:
+
+```bash
+apcore-mcp --extensions-dir ./extensions --approval elicit
+```
+
+### Extension Helpers
+
+Modules can report progress and request user input during execution via MCP protocol callbacks. Both helpers no-op gracefully when called outside an MCP context.
+
+```python
+from apcore_mcp import report_progress, elicit
+
+# Inside a module's execute():
+await report_progress(context, progress=50, total=100, message="Halfway done")
+
+result = await elicit(context, "Confirm deletion?", {"type": "object", "properties": {"confirm": {"type": "boolean"}}})
+if result and result["action"] == "accept":
+    # proceed
+    ...
+```
 
 ### `/metrics` Prometheus Endpoint
 
@@ -369,6 +418,10 @@ tools = to_openai_tools(executor)
 - **Auto-discovery** — all modules in the extensions directory are found and exposed automatically
 - **Three transports** — stdio (default, for desktop clients), Streamable HTTP, and SSE
 - **JWT authentication** — optional Bearer token auth for HTTP transports with `JWTAuthenticator`, permissive mode, PEM key file support, and env var fallback
+- **Approval mechanism** — runtime approval via MCP elicitation, auto-approve, or always-deny handlers
+- **AI guidance** — error responses include `retryable`, `ai_guidance`, `user_fixable`, and `suggestion` fields for agent consumption
+- **AI intent metadata** — tool descriptions enriched with `x-when-to-use`, `x-when-not-to-use`, `x-common-mistakes`, `x-workflow-hints` from module metadata
+- **Extension helpers** — modules can call `report_progress()` and `elicit()` during execution for MCP progress reporting and user input
 - **Annotation mapping** — apcore annotations (readonly, destructive, idempotent) map to MCP ToolAnnotations
 - **Schema conversion** — JSON Schema `$ref`/`$defs` inlining, strict mode for OpenAI Structured Outputs
 - **Error sanitization** — ACL errors and internal errors are sanitized; stack traces are never leaked
@@ -424,7 +477,7 @@ apcore-mcp (separate process / library call)
 git clone https://github.com/aipartnerup/apcore-mcp-python.git
 cd apcore-mcp
 pip install -e ".[dev]"
-pytest                           # 450 tests
+pytest                           # 480 tests
 pytest --cov                     # with coverage report
 ```
 
@@ -434,10 +487,14 @@ pytest --cov                     # with coverage report
 src/apcore_mcp/
 ├── __init__.py              # Public API: serve(), to_openai_tools()
 ├── __main__.py              # CLI entry point
+├── _utils.py                # Registry/Executor resolution utilities
+├── constants.py             # Error codes, registry events, module ID patterns
+├── helpers.py               # Extension helpers: report_progress(), elicit()
 ├── adapters/
 │   ├── schema.py            # JSON Schema conversion ($ref inlining)
 │   ├── annotations.py       # Annotation mapping (apcore → MCP/OpenAI)
-│   ├── errors.py            # Error sanitization
+│   ├── approval.py          # ElicitationApprovalHandler (MCP ↔ apcore)
+│   ├── errors.py            # Error sanitization with AI guidance fields
 │   └── id_normalizer.py     # Module ID normalization (dot ↔ dash)
 ├── auth/
 │   ├── __init__.py          # Auth exports
@@ -452,6 +509,7 @@ src/apcore_mcp/
 │   └── html.py              # Self-contained HTML/CSS/JS page
 └── server/
     ├── factory.py           # MCP Server creation and tool building
+    ├── server.py            # MCPServer non-blocking wrapper
     ├── router.py            # Tool call → Executor routing
     ├── transport.py         # Transport management (stdio/HTTP/SSE)
     └── listener.py          # Dynamic module registration listener
