@@ -66,7 +66,20 @@ class AuthMiddleware:
 
         path = scope.get("path", "")
         if self._is_exempt(path):
-            await self._app(scope, receive, send)
+            # Best-effort identity extraction: exempt paths don't *require* auth,
+            # but if a valid token is present we still populate identity so that
+            # downstream handlers (e.g. require_user_id) can use it.
+            identity = None
+            try:
+                headers = extract_headers(scope)
+                identity = self._authenticator.authenticate(headers)
+            except Exception:
+                pass
+            token = auth_identity_var.set(identity)
+            try:
+                await self._app(scope, receive, send)
+            finally:
+                auth_identity_var.reset(token)
             return
 
         headers = extract_headers(scope)

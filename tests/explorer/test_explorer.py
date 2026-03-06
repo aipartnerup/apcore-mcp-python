@@ -419,7 +419,7 @@ class TestTC009CustomPrefix:
 # TC-010: Explorer with authenticator injects identity on tool execution
 # ---------------------------------------------------------------------------
 
-SECRET = "explorer-test-secret"
+SECRET = "explorer-test-secret-is-32bytes!"
 
 
 def _make_token(payload: dict, key: str = SECRET) -> str:

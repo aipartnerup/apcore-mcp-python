@@ -370,3 +370,28 @@ class TestErrorMapper:
         assert result["is_error"] is True
         assert result["error_type"] == "APPROVAL_PENDING"
         assert result["details"] is None
+
+    # ── ExecutionCancelledError ────────────────────────────────────────
+
+    def test_execution_cancelled_error(self, mapper: ErrorMapper) -> None:
+        """ExecutionCancelledError maps to EXECUTION_CANCELLED with retryable=True."""
+        from apcore.cancel import ExecutionCancelledError
+
+        error = ExecutionCancelledError("Execution was cancelled")
+        result = mapper.to_mcp_error(error)
+
+        assert result["is_error"] is True
+        assert result["error_type"] == "EXECUTION_CANCELLED"
+        assert result["retryable"] is True
+        assert result["message"] == "Execution was cancelled"
+
+    def test_execution_cancelled_error_sanitizes_custom_message(self, mapper: ErrorMapper) -> None:
+        """ExecutionCancelledError with custom message is sanitized to fixed string."""
+        from apcore.cancel import ExecutionCancelledError
+
+        error = ExecutionCancelledError("internal detail: connection pool exhausted on host db-3")
+        result = mapper.to_mcp_error(error)
+
+        assert result["message"] == "Execution was cancelled"
+        assert "internal detail" not in result["message"]
+        assert "db-3" not in result["message"]

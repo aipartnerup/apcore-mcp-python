@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-03-06
+
+### Added
+
+- **`async_serve()` context manager**: New public API for embedding the MCP server into a larger ASGI application. Returns a `Starlette` app via `async with async_serve(registry) as mcp_app:`, enabling co-hosting with A2A, Django ASGI, or other services under a single uvicorn process.
+- **`TransportManager.build_streamable_http_app()`**: Low-level async context manager that builds a Starlette ASGI app with MCP transport, health, and metrics routes. Supports `extra_routes` and `middleware` injection.
+- **`ExecutionCancelledError` handling**: `ErrorMapper` now maps apcore's `ExecutionCancelledError` to a safe `EXECUTION_CANCELLED` response with `retryable=True`. Internal cancellation details are never leaked.
+- **New error codes**: `VERSION_INCOMPATIBLE`, `ERROR_CODE_COLLISION`, and `EXECUTION_CANCELLED` added to `ERROR_CODES` constants.
+- **Deep merge for streaming**: Streaming chunk accumulation uses recursive deep merge (depth-capped at 32) instead of shallow merge, correctly handling nested response structures.
+
+### Changed
+
+- **Dependency bump**: Requires `apcore>=0.9.0` (was `>=0.7.0`). Picks up `PreflightResult`, 11-step executor pipeline, retry middleware, error code registry, and more.
+- **Preflight validation aligned with apcore 0.9.0**: `ExecutionRouter` now passes the router-built `Context` (with identity, callbacks) to `Executor.validate()`, enabling accurate ACL and call-chain preflight checks. Error formatting handles all three `PreflightResult` error shapes: nested schema errors, flat field errors, and code-only errors.
+- **Annotation description suffix**: `AnnotationMapper.to_description_suffix()` now produces safety warnings (`WARNING: DESTRUCTIVE`, `REQUIRES APPROVAL`) as a separate section above the machine-readable annotation block, improving AI agent awareness of dangerous operations.
+- **Auth middleware best-effort identity on exempt paths**: `AuthMiddleware` now attempts identity extraction on exempt paths. Valid tokens populate `auth_identity_var` even when auth is not required, allowing downstream handlers to use identity when available.
+
 ## [0.8.0] - 2026-03-02
 
 ### Added
@@ -172,6 +189,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Filtering**: `tags` and `prefix` parameters for selective module exposure.
 - **260 tests**: Unit, integration, E2E, performance, and security test suites.
 
+[0.9.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/aipartnerup/apcore-mcp-python/compare/v0.5.1...v0.6.0

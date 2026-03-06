@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from apcore.cancel import ExecutionCancelledError
+
 from apcore_mcp.constants import ERROR_CODES
 
 
@@ -33,6 +35,16 @@ class ErrorMapper:
                 - message: str (safe error message)
                 - details: dict | None (optional additional context)
         """
+        # ExecutionCancelledError is not a ModuleError subclass
+        if isinstance(error, ExecutionCancelledError):
+            return {
+                "is_error": True,
+                "error_type": ERROR_CODES["EXECUTION_CANCELLED"],
+                "message": "Execution was cancelled",
+                "details": None,
+                "retryable": True,
+            }
+
         # Check if it's an apcore ModuleError by checking for expected attributes
         if hasattr(error, "code") and hasattr(error, "message") and hasattr(error, "details"):
             return self._handle_apcore_error(error)

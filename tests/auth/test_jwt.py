@@ -10,7 +10,7 @@ import pytest
 from apcore_mcp.auth.jwt import ClaimMapping, JWTAuthenticator
 from apcore_mcp.auth.protocol import Authenticator
 
-SECRET = "test-secret-key"
+SECRET = "test-secret-key-that-is-32-bytes!"
 
 
 def _make_token(payload: dict, key: str = SECRET, algorithm: str = "HS256") -> str:
@@ -66,7 +66,7 @@ class TestAuthenticate:
 
     def test_invalid_signature(self):
         auth = JWTAuthenticator(key=SECRET)
-        token = _make_token({"sub": "user-1"}, key="wrong-key")
+        token = _make_token({"sub": "user-1"}, key="wrong-key-that-is-also-32-bytes!")
         assert auth.authenticate({"authorization": f"Bearer {token}"}) is None
 
     def test_malformed_token(self):

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time as _time
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any, Protocol, runtime_checkable
 
 import anyio
@@ -61,6 +63,65 @@ class TransportManager:
             content=body,
             media_type="text/plain; version=0.0.4; charset=utf-8",
         )
+
+    @contextlib.asynccontextmanager
+    async def build_streamable_http_app(
+        self,
+        server: Server,
+        init_options: InitializationOptions,
+        *,
+        extra_routes: list[Route | Mount] | None = None,
+        middleware: list[tuple[type, dict[str, Any]]] | None = None,
+    ) -> AsyncIterator[Starlette]:
+        """Build a Starlette ASGI app for Streamable HTTP transport.
+
+        Returns a Starlette app that can be mounted into a larger application.
+        Must be used as an async context manager — the MCP protocol session
+        runs as a background task for the lifetime of the context.
+
+        Example::
+
+            async with transport_manager.build_streamable_http_app(
+                server, init_options
+            ) as mcp_app:
+                # Mount mcp_app into a parent Starlette app, then run uvicorn.
+                combined = Starlette(routes=[
+                    Mount("/mcp", app=mcp_app),
+                    Mount("/a2a", app=a2a_app),
+                ])
+                await uvicorn.Server(
+                    uvicorn.Config(combined, host="0.0.0.0", port=8000)
+                ).serve()
+        """
+        transport = StreamableHTTPServerTransport(
+            mcp_session_id=uuid.uuid4().hex,
+        )
+
+        async with transport.connect() as (read_stream, write_stream):
+
+            async def _health(request: Any) -> JSONResponse:
+                return JSONResponse(self._build_health_response())
+
+            async def _metrics(request: Any) -> Response:
+                return self._build_metrics_response()
+
+            routes: list[Route | Mount] = [
+                Route("/health", endpoint=_health, methods=["GET"]),
+                Route("/metrics", endpoint=_metrics, methods=["GET"]),
+            ]
+            if extra_routes:
+                routes.extend(extra_routes)
+            routes.append(Mount("/mcp", app=transport.handle_request))
+
+            app: Any = Starlette(routes=routes)
+            if middleware:
+                for mw_cls, mw_kwargs in middleware:
+                    app = mw_cls(app, **mw_kwargs)
+
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(server.run, read_stream, write_stream, init_options)
+                yield app
+                tg.cancel_scope.cancel()
 
     async def run_stdio(
         self,

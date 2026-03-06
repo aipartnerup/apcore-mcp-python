@@ -11,9 +11,13 @@ import pytest
 from apcore import Identity
 
 from apcore_mcp.auth.jwt import JWTAuthenticator
-from apcore_mcp.auth.middleware import AuthMiddleware, auth_identity_var, extract_headers
+from apcore_mcp.auth.middleware import (
+    AuthMiddleware,
+    auth_identity_var,
+    extract_headers,
+)
 
-SECRET = "test-secret-key"
+SECRET = "test-secret-key-that-is-32-bytes!"
 
 
 def _make_token(payload: dict, key: str = SECRET) -> str:
@@ -187,11 +191,82 @@ class TestExemptPrefixes:
         auth = JWTAuthenticator(key=SECRET)
         mw = AuthMiddleware(app, auth, exempt_prefixes={"/explorer"})
 
-        for path in ["/explorer", "/explorer/", "/explorer/tools", "/explorer/tools/foo/call"]:
+        for path in [
+            "/explorer",
+            "/explorer/",
+            "/explorer/tools",
+            "/explorer/tools/foo/call",
+        ]:
             app.reset_mock()
             scope = _build_scope(path=path)
             await mw(scope, AsyncMock(), AsyncMock())
             assert app.call_count == 1, f"Expected pass-through for {path}"
+
+    @pytest.mark.asyncio
+    async def test_exempt_path_extracts_identity_when_token_present(self):
+        """Exempt paths should still populate identity if a valid token is provided."""
+        captured_identity: list[Identity | None] = []
+
+        async def app(scope: Any, receive: Any, send: Any) -> None:
+            captured_identity.append(auth_identity_var.get())
+
+        auth = JWTAuthenticator(key=SECRET)
+        mw = AuthMiddleware(app, auth, exempt_prefixes={"/explorer"})
+
+        token = _make_token({"sub": "user-1", "roles": ["viewer"]})
+        scope = _build_scope(path="/explorer/tools/foo/call", headers=_build_auth_header(token))
+        await mw(scope, AsyncMock(), AsyncMock())
+
+        assert captured_identity[0] is not None
+        assert captured_identity[0].id == "user-1"
+
+    @pytest.mark.asyncio
+    async def test_exempt_path_identity_none_without_token(self):
+        """Exempt paths without a token should still pass through with identity=None."""
+        captured_identity: list[Identity | None] = []
+
+        async def app(scope: Any, receive: Any, send: Any) -> None:
+            captured_identity.append(auth_identity_var.get())
+
+        auth = JWTAuthenticator(key=SECRET)
+        mw = AuthMiddleware(app, auth, exempt_prefixes={"/explorer"})
+
+        scope = _build_scope(path="/explorer/tools")
+        await mw(scope, AsyncMock(), AsyncMock())
+
+        assert captured_identity == [None]
+
+    @pytest.mark.asyncio
+    async def test_exempt_path_identity_none_with_invalid_token(self):
+        """Exempt paths with an invalid token should still pass through with identity=None."""
+        captured_identity: list[Identity | None] = []
+
+        async def app(scope: Any, receive: Any, send: Any) -> None:
+            captured_identity.append(auth_identity_var.get())
+
+        auth = JWTAuthenticator(key=SECRET)
+        mw = AuthMiddleware(app, auth, exempt_prefixes={"/explorer"})
+
+        scope = _build_scope(path="/explorer/tools", headers=_build_auth_header("bad.token"))
+        await mw(scope, AsyncMock(), AsyncMock())
+
+        assert captured_identity == [None]
+
+    @pytest.mark.asyncio
+    async def test_exempt_path_resets_identity_after_request(self):
+        """Identity contextvar must be reset after exempt path request."""
+
+        async def app(scope: Any, receive: Any, send: Any) -> None:
+            pass
+
+        auth = JWTAuthenticator(key=SECRET)
+        mw = AuthMiddleware(app, auth, exempt_prefixes={"/explorer"})
+
+        token = _make_token({"sub": "user-1"})
+        scope = _build_scope(path="/explorer/x", headers=_build_auth_header(token))
+        await mw(scope, AsyncMock(), AsyncMock())
+
+        assert auth_identity_var.get() is None
 
     @pytest.mark.asyncio
     async def test_prefix_does_not_exempt_non_matching(self):
@@ -315,7 +390,10 @@ class TestExtractHeaders:
             ]
         }
         result = extract_headers(scope)
-        assert result == {"content-type": "application/json", "authorization": "Bearer abc"}
+        assert result == {
+            "content-type": "application/json",
+            "authorization": "Bearer abc",
+        }
 
     def test_lowercases_header_keys(self):
         scope = {"headers": [(b"X-Custom-Header", b"value")]}

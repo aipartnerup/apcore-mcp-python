@@ -590,7 +590,7 @@ class TestExecutionRouter:
             def __init__(self) -> None:
                 self.calls: list[tuple[str, dict[str, Any], Any]] = []
 
-            def validate(self, module_id: str, inputs: dict[str, Any]) -> ValidationResult:
+            def validate(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> ValidationResult:
                 return ValidationResult(
                     valid=False,
                     errors=[{"field": "width", "message": "required"}],
@@ -611,6 +611,98 @@ class TestExecutionRouter:
         # Executor should NOT have been called
         assert len(executor.calls) == 0
 
+    async def test_validate_inputs_preflight_nested_errors(self) -> None:
+        """PreflightResult-style errors with nested 'errors' list are formatted correctly."""
+
+        @dataclass
+        class PreflightResult:
+            valid: bool
+            errors: list[dict[str, Any]] = dc_field(default_factory=list)
+
+        class PreflightExecutor:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, Any], Any]] = []
+
+            def validate(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> PreflightResult:
+                return PreflightResult(
+                    valid=False,
+                    errors=[
+                        {
+                            "code": "SCHEMA_VALIDATION_ERROR",
+                            "errors": [
+                                {"field": "name", "code": "missing", "message": "required"},
+                                {"field": "age", "code": "type_error", "message": "must be integer"},
+                            ],
+                        },
+                    ],
+                )
+
+            async def call_async(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> Any:
+                self.calls.append((module_id, inputs, context))
+                return {"ok": True}
+
+        executor = PreflightExecutor()
+        router = ExecutionRouter(executor, validate_inputs=True)
+
+        content, is_error, trace_id = await router.handle_call("user.create", {})
+
+        assert is_error is True
+        assert "name: required" in content[0]["text"]
+        assert "age: must be integer" in content[0]["text"]
+        assert len(executor.calls) == 0
+
+    async def test_validate_inputs_preflight_code_only_error(self) -> None:
+        """PreflightResult errors with only 'code' (no 'message') use code as fallback."""
+
+        @dataclass
+        class PreflightResult:
+            valid: bool
+            errors: list[dict[str, Any]] = dc_field(default_factory=list)
+
+        class CodeOnlyExecutor:
+            def validate(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> PreflightResult:
+                return PreflightResult(
+                    valid=False,
+                    errors=[{"code": "ACL_DENIED"}],
+                )
+
+            async def call_async(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> Any:
+                return {"ok": True}
+
+        executor = CodeOnlyExecutor()
+        router = ExecutionRouter(executor, validate_inputs=True)
+
+        content, is_error, trace_id = await router.handle_call("secret.module", {})
+
+        assert is_error is True
+        assert "ACL_DENIED" in content[0]["text"]
+
+    async def test_validate_inputs_passes_context(self) -> None:
+        """validate() receives the context built by the router for ACL/call-chain checks."""
+
+        @dataclass
+        class PreflightResult:
+            valid: bool
+            errors: list[dict[str, Any]] = dc_field(default_factory=list)
+
+        class ContextCapturingExecutor:
+            def __init__(self) -> None:
+                self.validate_context: Any = None
+
+            def validate(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> PreflightResult:
+                self.validate_context = context
+                return PreflightResult(valid=True)
+
+            async def call_async(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> Any:
+                return {"ok": True}
+
+        executor = ContextCapturingExecutor()
+        router = ExecutionRouter(executor, validate_inputs=True)
+
+        await router.handle_call("test.module", {})
+
+        assert executor.validate_context is not None
+
     async def test_validate_inputs_passes_valid(self) -> None:
         """validate_inputs=True allows valid inputs through to execution."""
 
@@ -623,7 +715,7 @@ class TestExecutionRouter:
             def __init__(self) -> None:
                 self.calls: list[tuple[str, dict[str, Any], Any]] = []
 
-            def validate(self, module_id: str, inputs: dict[str, Any]) -> ValidationResult:
+            def validate(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> ValidationResult:
                 return ValidationResult(valid=True)
 
             async def call_async(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> Any:
@@ -662,7 +754,7 @@ class TestExecutionRouter:
         """Exceptions from executor.validate() are caught and returned as errors."""
 
         class FailingValidateExecutor:
-            def validate(self, module_id: str, inputs: dict[str, Any]) -> Any:
+            def validate(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> Any:
                 raise ModuleNotFoundStubError(module_id)
 
             async def call_async(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> Any:
@@ -712,3 +804,21 @@ class TestExecutionRouter:
 
         assert is_error is True
         assert content[0]["text"] == "Simple failure"
+
+    # ── ExecutionCancelledError through router ──────────────────────────
+
+    async def test_execution_cancelled_returns_retryable_error(self) -> None:
+        """ExecutionCancelledError from executor surfaces as is_error with retryable."""
+        from apcore.cancel import ExecutionCancelledError
+
+        executor = StubExecutor(error=ExecutionCancelledError("cancelled by token"))
+        router = ExecutionRouter(executor)
+
+        content, is_error, trace_id = await router.handle_call("my.module", {})
+
+        assert is_error is True
+        text = content[0]["text"]
+        assert "Execution was cancelled" in text
+        assert "retryable" in text
+        # Internal message must NOT leak
+        assert "cancelled by token" not in text

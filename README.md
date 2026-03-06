@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="https://raw.githubusercontent.com/aipartnerup/apcore-mcp/main/apcore-mcp-logo.svg" alt="apcore-mcp logo" width="200"/>
+</div>
+
 # apcore-mcp
 
 Automatic MCP Server & OpenAI Tools Bridge for apcore.
@@ -28,6 +32,11 @@ Automatic MCP Server & OpenAI Tools Bridge for apcore.
 - **Pure adapter** — apcore-mcp reads from the apcore Registry; it never modifies your modules
 - **Works with any `xxx-apcore` project** — if it uses the apcore Module Registry, apcore-mcp can serve it
 
+## Documentation
+
+For full documentation, including Quick Start guides for both Python and TypeScript, visit:
+**[https://aipartnerup.github.io/apcore-mcp/](https://aipartnerup.github.io/apcore-mcp/)**
+
 ## Installation
 
 Install apcore-mcp alongside your existing apcore project:
@@ -38,7 +47,7 @@ pip install apcore-mcp
 
 That's it. Your existing project requires no changes.
 
-Requires Python 3.11+ and `apcore >= 0.7.0`.
+Requires Python 3.11+ and `apcore >= 0.9.0`.
 
 ## Quick Start
 
@@ -246,6 +255,24 @@ serve(
 ```
 
 Accepts either a `Registry` or `Executor`. When a `Registry` is passed, an `Executor` is created automatically.
+
+### `async_serve()`
+
+Embed the MCP server into a larger ASGI application (e.g. co-host with A2A, Django ASGI):
+
+```python
+from apcore_mcp import async_serve
+
+async with async_serve(registry, explorer=True) as mcp_app:
+    combined = Starlette(routes=[
+        Mount("/mcp", app=mcp_app),
+        Mount("/a2a", app=a2a_app),
+    ])
+    config = uvicorn.Config(combined, host="0.0.0.0", port=8000)
+    await uvicorn.Server(config).serve()
+```
+
+Accepts the same parameters as `serve()` (except `transport`, `host`, `port`, `on_startup`, `on_shutdown`). Returns a `Starlette` app via async context manager.
 
 ### Tool Explorer
 
@@ -477,7 +504,7 @@ apcore-mcp (separate process / library call)
 git clone https://github.com/aipartnerup/apcore-mcp-python.git
 cd apcore-mcp
 pip install -e ".[dev]"
-pytest                           # 480 tests
+pytest                           # 512 tests
 pytest --cov                     # with coverage report
 ```
 

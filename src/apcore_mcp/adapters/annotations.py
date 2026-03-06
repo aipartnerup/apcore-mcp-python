@@ -56,24 +56,31 @@ class AnnotationMapper:
         }
 
     def to_description_suffix(self, annotations: Any | None) -> str:
-        """Generate annotation text to append to OpenAI tool descriptions.
+        """Generate annotation text to append to tool descriptions.
 
-        This creates a human-readable suffix that embeds annotation metadata
-        in the tool description for LLM clients that don't support MCP's
-        native annotation hints.
+        Produces two sections:
+        1. Safety warnings for destructive/approval/external operations.
+        2. Machine-readable annotation block for non-default values.
 
         Args:
             annotations: ModuleAnnotations instance or None
 
         Returns:
-            String suffix in format: "\\n\\n[Annotations: key=value, ...]"
-            Empty string if annotations is None
+            Formatted string suffix, or empty string if no annotations.
         """
         if annotations is None:
             return ""
 
-        # Build annotation key-value pairs only for non-default values
-        parts = []
+        warnings: list[str] = []
+        if getattr(annotations, "destructive", False):
+            warnings.append(
+                "WARNING: DESTRUCTIVE - This operation may irreversibly modify or "
+                "delete data. Confirm with user before calling."
+            )
+        if getattr(annotations, "requires_approval", False):
+            warnings.append("REQUIRES APPROVAL: Human confirmation is required before execution.")
+
+        parts: list[str] = []
         if annotations.readonly != DEFAULT_ANNOTATIONS["readonly"]:
             parts.append(f"readonly={str(annotations.readonly).lower()}")
         if annotations.destructive != DEFAULT_ANNOTATIONS["destructive"]:
@@ -87,10 +94,16 @@ class AnnotationMapper:
         if getattr(annotations, "streaming", False) != DEFAULT_ANNOTATIONS["streaming"]:
             parts.append(f"streaming={str(getattr(annotations, 'streaming', False)).lower()}")
 
-        if not parts:
+        if not warnings and not parts:
             return ""
 
-        return f"\n\n[Annotations: {', '.join(parts)}]"
+        sections: list[str] = []
+        if warnings:
+            sections.append("\n".join(warnings))
+        if parts:
+            sections.append(f"[Annotations: {', '.join(parts)}]")
+
+        return "\n\n" + "\n\n".join(sections)
 
     def has_requires_approval(self, annotations: Any | None) -> bool:
         """Check if module requires human approval before execution.

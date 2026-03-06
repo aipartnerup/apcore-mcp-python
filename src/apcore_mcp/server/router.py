@@ -15,6 +15,25 @@ from apcore_mcp.helpers import MCP_ELICIT_KEY, MCP_PROGRESS_KEY
 
 logger = logging.getLogger(__name__)
 
+_DEEP_MERGE_MAX_DEPTH = 32
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any], depth: int = 0) -> dict[str, Any]:
+    """Recursively merge *overlay* into *base*, capped at ``_DEEP_MERGE_MAX_DEPTH``.
+
+    When both sides have a dict for the same key the merge recurses.
+    All other types are overwritten by *overlay*.
+    """
+    if depth >= _DEEP_MERGE_MAX_DEPTH:
+        return {**base, **overlay}
+    merged = dict(base)
+    for key, value in overlay.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(merged[key], value, depth + 1)
+        else:
+            merged[key] = value
+    return merged
+
 
 class ExecutionRouter:
     """Routes MCP tool calls through the apcore Executor pipeline.
@@ -29,7 +48,7 @@ class ExecutionRouter:
     the caller provides a ``progress_token`` + ``send_notification``
     callback via the *extra* dict, the router iterates the async
     generator and forwards each chunk as a ``notifications/progress``
-    message, accumulating chunks via shallow merge.
+    message, accumulating chunks via recursive deep merge.
 
     Args:
         executor: An apcore Executor instance (duck-typed -- must expose
@@ -148,11 +167,18 @@ class ExecutionRouter:
         # Pre-execution validation
         if self._validate_inputs:
             try:
-                validation = self._executor.validate(tool_name, arguments)
+                validation = self._executor.validate(tool_name, arguments, context)
                 if not validation.valid:
-                    detail = "; ".join(
-                        f"{e.get('field', '?')}: {e.get('message', 'invalid')}" for e in validation.errors
-                    )
+                    parts: list[str] = []
+                    for e in validation.errors:
+                        if "errors" in e:
+                            for sub in e["errors"]:
+                                parts.append(f"{sub.get('field', '?')}: {sub.get('message', 'invalid')}")
+                        elif "field" in e:
+                            parts.append(f"{e['field']}: {e.get('message', 'invalid')}")
+                        else:
+                            parts.append(e.get("message", e.get("code", "invalid")))
+                    detail = "; ".join(parts)
                     return (
                         [{"type": "text", "text": f"Validation failed: {detail}"}],
                         True,
@@ -251,8 +277,8 @@ class ExecutionRouter:
                 }
                 await send_notification(notification)
 
-                # Shallow merge into accumulated result
-                accumulated = {**accumulated, **chunk}
+                # Deep merge into accumulated result (depth-capped at 32)
+                accumulated = _deep_merge(accumulated, chunk)
                 chunk_index += 1
 
             json_output = json.dumps(accumulated, default=str)

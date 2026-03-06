@@ -24,7 +24,7 @@ from apcore_mcp.explorer import create_explorer_mount
 from apcore_mcp.server.factory import MCPServerFactory
 from apcore_mcp.server.router import ExecutionRouter
 
-SECRET = "integration-test-secret"
+SECRET = "integration-test-secret-32bytes!"
 EXTENSIONS_DIR = "./examples/extensions"
 
 

@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+
+from starlette.applications import Starlette
+from starlette.routing import Mount, Route
 
 from apcore_mcp._utils import resolve_executor, resolve_registry
 from apcore_mcp.adapters.annotations import AnnotationMapper
@@ -25,6 +29,7 @@ from apcore_mcp.server.transport import MetricsExporter, TransportManager
 __all__ = [
     # Public API
     "serve",
+    "async_serve",
     "to_openai_tools",
     # Server building blocks
     "MetricsExporter",
@@ -57,7 +62,7 @@ __all__ = [
     "MCP_ELICIT_KEY",
 ]
 
-__version__ = "0.8.1"
+__version__ = "0.9.0"
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +214,144 @@ def serve(
     finally:
         if on_shutdown is not None:
             on_shutdown()
+
+
+@contextlib.asynccontextmanager
+async def async_serve(
+    registry_or_executor: object,
+    *,
+    name: str = "apcore-mcp",
+    version: str | None = None,
+    tags: list[str] | None = None,
+    prefix: str | None = None,
+    log_level: str | None = None,
+    validate_inputs: bool = False,
+    metrics_collector: MetricsExporter | None = None,
+    explorer: bool = False,
+    explorer_prefix: str = "/explorer",
+    allow_execute: bool = False,
+    authenticator: Authenticator | None = None,
+    require_auth: bool = True,
+    exempt_paths: set[str] | None = None,
+    approval_handler: object | None = None,
+) -> AsyncIterator[Starlette]:
+    """Build an MCP Starlette ASGI app for embedding into a larger service.
+
+    Use this when you want to mount the MCP server alongside other ASGI apps
+    (e.g. A2A, Django ASGI) under a single uvicorn process.
+
+    Must be used as an async context manager. The MCP protocol session runs
+    as a background task for the lifetime of the context.
+
+    Example::
+
+        async with async_serve(registry) as mcp_app:
+            combined = Starlette(routes=[
+                Mount("/mcp", app=mcp_app),
+                Mount("/a2a", app=a2a_app),
+            ])
+            config = uvicorn.Config(combined, host="0.0.0.0", port=8000)
+            await uvicorn.Server(config).serve()
+
+    Args:
+        registry_or_executor: An apcore Registry or Executor instance.
+        name: MCP server name.
+        version: MCP server version. Defaults to apcore-mcp version.
+        tags: Filter modules by tags.
+        prefix: Filter modules by ID prefix.
+        log_level: Set the log level for the apcore_mcp logger.
+        validate_inputs: Validate tool inputs against schemas before execution.
+        metrics_collector: Optional MetricsCollector for Prometheus /metrics.
+        explorer: Enable the browser-based Tool Explorer UI.
+        explorer_prefix: URL prefix for the explorer (default: "/explorer").
+        allow_execute: Allow tool execution from the explorer UI.
+        authenticator: Optional Authenticator for JWT/token-based auth.
+        require_auth: If True, unauthenticated requests receive 401.
+        exempt_paths: Exact paths that bypass authentication.
+        approval_handler: Optional approval handler for runtime approval.
+
+    Yields:
+        A configured Starlette ASGI application with MCP endpoints.
+    """
+    if not name:
+        raise ValueError("name must not be empty")
+    if len(name) > 255:
+        raise ValueError(f"name exceeds maximum length of 255: {len(name)}")
+    if tags is not None:
+        for tag in tags:
+            if not tag:
+                raise ValueError("Tag values must not be empty")
+    if prefix is not None and not prefix:
+        raise ValueError("prefix must not be empty")
+    if log_level is not None:
+        valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        if log_level.upper() not in valid_levels:
+            raise ValueError(f"Unknown log level: {log_level!r}. Valid: {sorted(valid_levels)}")
+    if explorer and not explorer_prefix.startswith("/"):
+        raise ValueError("explorer_prefix must start with '/'")
+
+    resolved_version = version or __version__
+
+    if log_level is not None:
+        logging.getLogger("apcore_mcp").setLevel(getattr(logging, log_level.upper()))
+
+    registry = resolve_registry(registry_or_executor)
+    executor = resolve_executor(registry_or_executor, approval_handler=approval_handler)
+
+    # Build MCP server components
+    factory = MCPServerFactory()
+    server = factory.create_server(name=name, version=resolved_version)
+    tools = factory.build_tools(registry, tags=tags, prefix=prefix)
+    router = ExecutionRouter(executor, validate_inputs=validate_inputs)
+    factory.register_handlers(server, tools, router)
+    factory.register_resource_handlers(server, registry)
+    init_options = factory.build_init_options(server, name=name, version=resolved_version)
+
+    logger.info(
+        "Building MCP app '%s' v%s with %d tools",
+        name,
+        resolved_version,
+        len(tools),
+    )
+
+    # Build optional explorer routes
+    extra_routes: list[Route | Mount] | None = None
+    if explorer:
+        from apcore_mcp.explorer import create_explorer_mount
+
+        extra_routes = [
+            create_explorer_mount(
+                tools,
+                router,
+                allow_execute=allow_execute,
+                explorer_prefix=explorer_prefix,
+                authenticator=authenticator,
+            )
+        ]
+        logger.info("Tool Explorer enabled at %s", explorer_prefix)
+
+    # Build auth middleware
+    auth_middleware: list[tuple[type, dict]] | None = None
+    if authenticator is not None:
+        mw_kwargs: dict[str, object] = {"authenticator": authenticator}
+        if not require_auth:
+            mw_kwargs["require_auth"] = False
+        if exempt_paths is not None:
+            mw_kwargs["exempt_paths"] = exempt_paths
+        if explorer:
+            mw_kwargs["exempt_prefixes"] = {explorer_prefix}
+        auth_middleware = [(AuthMiddleware, mw_kwargs)]
+
+    transport_manager = TransportManager(metrics_collector=metrics_collector)
+    transport_manager.set_module_count(len(tools))
+
+    async with transport_manager.build_streamable_http_app(
+        server,
+        init_options,
+        extra_routes=extra_routes,
+        middleware=auth_middleware,
+    ) as app:
+        yield app
 
 
 def to_openai_tools(

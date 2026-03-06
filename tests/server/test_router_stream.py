@@ -8,7 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from apcore_mcp.helpers import MCP_PROGRESS_KEY
-from apcore_mcp.server.router import ExecutionRouter
+from apcore_mcp.server.router import ExecutionRouter, _deep_merge
 
 # ---------------------------------------------------------------------------
 # Stub executors
@@ -227,6 +227,38 @@ class TestStreamingPath:
         parsed = json.loads(content[0]["text"])
         assert parsed == {"status": "done", "count": 10}
 
+    async def test_stream_cancelled_error_is_retryable(self) -> None:
+        """ExecutionCancelledError during streaming returns retryable error."""
+        from apcore.cancel import ExecutionCancelledError
+
+        class CancellingStreamExecutor:
+            async def call_async(self, module_id: str, inputs: dict[str, Any], context: Any = None) -> Any:
+                return {}
+
+            async def stream(
+                self, module_id: str, inputs: dict[str, Any], context: Any = None
+            ) -> AsyncIterator[dict[str, Any]]:
+                yield {"partial": "data"}
+                raise ExecutionCancelledError("token cancelled mid-stream")
+
+        executor = CancellingStreamExecutor()
+        router = ExecutionRouter(executor)
+
+        send_notification = AsyncMock()
+        extra: dict[str, Any] = {
+            "progress_token": "tok-cancel",
+            "send_notification": send_notification,
+        }
+
+        content, is_error, _ = await router.handle_call("my.tool", {}, extra=extra)
+
+        assert is_error is True
+        text = content[0]["text"]
+        assert "Execution was cancelled" in text
+        assert "retryable" in text
+        # Internal message must NOT leak
+        assert "token cancelled" not in text
+
     async def test_stream_error_is_caught_and_returned(self) -> None:
         """If stream() raises, the error is caught and returned as is_error=True."""
 
@@ -300,6 +332,28 @@ class TestStreamingPath:
         assert MCP_PROGRESS_KEY in context.data
         assert callable(context.data[MCP_PROGRESS_KEY])
 
+    async def test_streaming_uses_deep_merge_for_nested(self) -> None:
+        """Streaming accumulation deep-merges nested structures."""
+        chunks = [
+            {"data": {"x": 1, "y": 2}},
+            {"data": {"y": 3, "z": 4}},
+        ]
+        executor = StreamingExecutor(chunks)
+        router = ExecutionRouter(executor)
+
+        send_notification = AsyncMock()
+        extra: dict[str, Any] = {
+            "progress_token": "tok-deep",
+            "send_notification": send_notification,
+        }
+
+        content, is_error, _ = await router.handle_call("my.tool", {}, extra=extra)
+
+        assert is_error is False
+        parsed = json.loads(content[0]["text"])
+        # Deep merge: data.x preserved, data.y overwritten, data.z added
+        assert parsed == {"data": {"x": 1, "y": 3, "z": 4}}
+
     async def test_stream_backward_compat_legacy_executor(self) -> None:
         """Stream falls back when executor.stream() doesn't accept context arg."""
 
@@ -335,3 +389,52 @@ class TestStreamingPath:
         parsed = json.loads(content[0]["text"])
         assert parsed == {"result": "ok"}
         assert len(executor.stream_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Deep merge unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestDeepMerge:
+    """Tests for _deep_merge used in streaming chunk accumulation."""
+
+    def test_flat_merge(self) -> None:
+        assert _deep_merge({"a": 1}, {"b": 2}) == {"a": 1, "b": 2}
+
+    def test_overwrite_scalar(self) -> None:
+        assert _deep_merge({"a": 1}, {"a": 2}) == {"a": 2}
+
+    def test_nested_dict_merge(self) -> None:
+        base = {"outer": {"a": 1, "b": 2}}
+        overlay = {"outer": {"b": 3, "c": 4}}
+        assert _deep_merge(base, overlay) == {"outer": {"a": 1, "b": 3, "c": 4}}
+
+    def test_deeply_nested_merge(self) -> None:
+        base = {"l1": {"l2": {"l3": "old", "keep": True}}}
+        overlay = {"l1": {"l2": {"l3": "new"}}}
+        assert _deep_merge(base, overlay) == {"l1": {"l2": {"l3": "new", "keep": True}}}
+
+    def test_depth_cap_falls_back_to_shallow(self) -> None:
+        base = {"nested": {"old_key": 1}}
+        overlay = {"nested": {"new_key": 2}}
+        result = _deep_merge(base, overlay, depth=32)
+        assert result == {"nested": {"new_key": 2}}
+        assert "old_key" not in result["nested"]
+
+    def test_overlay_replaces_non_dict_with_dict(self) -> None:
+        assert _deep_merge({"a": 1}, {"a": {"nested": True}}) == {"a": {"nested": True}}
+
+    def test_overlay_replaces_dict_with_scalar(self) -> None:
+        assert _deep_merge({"a": {"nested": True}}, {"a": 1}) == {"a": 1}
+
+    def test_empty_base(self) -> None:
+        assert _deep_merge({}, {"a": 1}) == {"a": 1}
+
+    def test_empty_overlay(self) -> None:
+        assert _deep_merge({"a": 1}, {}) == {"a": 1}
+
+    def test_does_not_mutate_base(self) -> None:
+        base = {"a": {"b": 1}}
+        _deep_merge(base, {"a": {"c": 2}})
+        assert base == {"a": {"b": 1}}

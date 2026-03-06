@@ -125,7 +125,7 @@ class TestAnnotationMapper:
         assert mapper.has_requires_approval(None) is False
 
     def test_description_suffix_with_annotations(self, mapper: AnnotationMapper) -> None:
-        """Test description suffix embeds only non-default annotations."""
+        """Test description suffix embeds warnings and non-default annotations."""
         annotations = ModuleAnnotations(
             destructive=True,
             readonly=False,
@@ -135,8 +135,12 @@ class TestAnnotationMapper:
         )
         result = mapper.to_description_suffix(annotations)
 
-        # Expected format: newlines + bracketed annotation list
-        assert result.startswith("\n\n[Annotations: ")
+        # Starts with newlines, then safety warnings
+        assert result.startswith("\n\n")
+        assert "WARNING: DESTRUCTIVE" in result
+        assert "REQUIRES APPROVAL" in result
+        # Annotation block present
+        assert "[Annotations: " in result
         assert result.endswith("]")
         assert "destructive=true" in result.lower()
         assert "idempotent=true" in result.lower()
