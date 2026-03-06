@@ -19,7 +19,7 @@ from apcore_mcp.adapters.schema import SchemaConverter
 from apcore_mcp.auth import Authenticator, AuthMiddleware, ClaimMapping, JWTAuthenticator
 from apcore_mcp.constants import ERROR_CODES, MODULE_ID_PATTERN, REGISTRY_EVENTS
 from apcore_mcp.converters.openai import OpenAIConverter
-from apcore_mcp.helpers import MCP_ELICIT_KEY, MCP_PROGRESS_KEY, elicit, report_progress
+from apcore_mcp.helpers import MCP_ELICIT_KEY, MCP_PROGRESS_KEY, ElicitResult, elicit, report_progress
 from apcore_mcp.server.factory import MCPServerFactory
 from apcore_mcp.server.listener import RegistryListener
 from apcore_mcp.server.router import ExecutionRouter
@@ -58,6 +58,7 @@ __all__ = [
     # Extension helpers
     "report_progress",
     "elicit",
+    "ElicitResult",
     "MCP_PROGRESS_KEY",
     "MCP_ELICIT_KEY",
 ]

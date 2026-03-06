@@ -7,11 +7,21 @@ Gracefully no-op when callbacks are absent (non-MCP execution paths).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal, NotRequired, TypedDict
 
 # Keys under context.data where MCP callbacks are stored.
 MCP_PROGRESS_KEY = "_mcp_progress"
 MCP_ELICIT_KEY = "_mcp_elicit"
+
+
+class ElicitResult(TypedDict):
+    """Typed result from an MCP elicitation request.
+
+    Matches the TypeScript SDK's ``ElicitResult`` interface.
+    """
+
+    action: Literal["accept", "decline", "cancel"]
+    content: NotRequired[dict[str, Any] | None]
 
 
 async def report_progress(
@@ -43,7 +53,7 @@ async def elicit(
     context: Any,
     message: str,
     requested_schema: dict[str, Any] | None = None,
-) -> dict[str, Any] | None:
+) -> ElicitResult | None:
     """Ask the MCP client for user input via the elicitation protocol.
 
     Returns None when called outside an MCP context (no callback injected)
@@ -55,14 +65,14 @@ async def elicit(
         requested_schema: Optional JSON Schema describing the expected input.
 
     Returns:
-        A dict with ``action`` ("accept"/"decline"/"cancel") and optional
-        ``content``, or None if elicitation is unavailable.
+        An ``ElicitResult`` with ``action`` ("accept"/"decline"/"cancel") and
+        optional ``content``, or None if elicitation is unavailable.
     """
     data = getattr(context, "data", None)
     if data is None:
         return None
     callback = data.get(MCP_ELICIT_KEY)
     if callback is not None:
-        result: dict[str, Any] | None = await callback(message, requested_schema)
+        result: ElicitResult | None = await callback(message, requested_schema)
         return result
     return None
