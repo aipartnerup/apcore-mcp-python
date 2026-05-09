@@ -281,9 +281,9 @@ mcp = APCoreMCP(
     async_max_tasks=1000,        # max queued async tasks
 )
 
-# Note: redact_output, schema_converter, annotation_mapper, and error_mapper
-# are NOT APCoreMCP() constructor kwargs — pass them to mcp.serve() /
-# mcp.async_serve() instead (see the `serve()` reference below).
+# Note: redact_output, strategy, and trace are configurable on the
+# function-based serve() / async_serve(); they are not exposed on
+# APCoreMCP.serve() (see the `serve()` reference below).
 
 # Launch as MCP server (blocking)
 mcp.serve(transport="streamable-http", port=8000, explorer=True)
@@ -341,9 +341,7 @@ serve(
     async_tasks=True,            # enable F-043 Async Task Bridge
     async_max_concurrent=10,     # max concurrent async tasks
     async_max_tasks=1000,        # max queued async tasks
-    schema_converter=None,       # override default SchemaConverter (EB-2)
-    annotation_mapper=None,      # override default AnnotationMapper (EB-2)
-    error_mapper=None,           # override default ErrorMapper (EB-2)
+    # Note: schema_converter / annotation_mapper / error_mapper hooks are reserved for v0.16+ (EB-2)
 )
 ```
 
