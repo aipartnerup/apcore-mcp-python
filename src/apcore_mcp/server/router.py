@@ -309,7 +309,7 @@ class ExecutionRouter:
                 if descriptor is not None and self._async_bridge.is_async_module(descriptor):
                     submit_ctx = Context.create(
                         data={},
-                        identity=(extra or {}).get("identity"),
+                        identity=self._resolve_identity(extra),
                     )
                     # [A-D-210] Attach the already-registered cancel token so
                     # the bridged submit observes cooperative cancellation.
@@ -386,7 +386,12 @@ class ExecutionRouter:
 
             context_data[MCP_ELICIT_KEY] = _elicit_callback
 
-        identity = extra.get("identity") if extra is not None else None
+        # [A-D-211] Identity resolution: prefer extras.identity (set by the
+        # factory after reading auth_identity_var), fall back to the auth
+        # ContextVar so direct router callers (tests, third-party embedders)
+        # still see the authenticated identity. Mirrors Rust's two-source
+        # cascade (router.rs reads extras + auth_identity_var).
+        identity = self._resolve_identity(extra)
 
         # Inbound W3C Trace Context: parse `_meta.traceparent` (per MCP _meta
         # passthrough) and seed the apcore Context so downstream modules
@@ -479,6 +484,27 @@ class ExecutionRouter:
 
         # Non-streaming path
         return await self._handle_call_async(tool_name, arguments, context=context, version_hint=version_hint)
+
+    def _resolve_identity(self, extra: dict[str, Any] | None) -> Any:
+        """[A-D-211] Resolve identity with extras-then-ContextVar fallback.
+
+        Mirrors Rust's two-source cascade in router.rs: prefer the
+        identity passed via ``extra['identity']`` (set by the factory after
+        reading ``auth_identity_var`` for the canonical production path),
+        but fall back to the auth ContextVar so direct router callers
+        (tests, third-party embedders) still see the authenticated identity
+        from upstream ASGI middleware.
+        """
+        if extra is not None:
+            ident = extra.get("identity")
+            if ident is not None:
+                return ident
+        try:
+            from apcore_mcp.auth.middleware import auth_identity_var
+
+            return auth_identity_var.get(None)
+        except Exception:  # noqa: BLE001 — defensive: auth module always present in apcore-mcp
+            return None
 
     def _evict_cancel_tokens_locked(self) -> None:
         """Evict oldest entries when the cancel-tokens map exceeds the cap.

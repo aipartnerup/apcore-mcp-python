@@ -107,6 +107,68 @@ class TestRouterIdentityInjection:
         parsed = json.loads(content[0]["text"])
         assert parsed["result"] == 13
 
+    async def test_identity_falls_back_to_auth_context_var(self) -> None:
+        """[A-D-211] When extra omits identity, the router must read it from
+        ``auth_identity_var`` so direct callers (tests, third-party
+        embedders) inherit the identity set by upstream ASGI middleware.
+
+        Mirrors Rust's two-source cascade. Pre-fix, Python only read
+        ``extra['identity']`` and silently dropped the ContextVar identity.
+        """
+        captured_context: dict[str, Any] = {}
+
+        class CapturingExecutor:
+            async def call_async(
+                self,
+                module_id: str,
+                inputs: dict[str, Any],
+                context: Any = None,
+                version_hint: str | None = None,
+            ) -> Any:
+                captured_context["context"] = context
+                return {"ok": True}
+
+        router = ExecutionRouter(CapturingExecutor())
+        identity = Identity(id="ctxvar-user", type="user", roles=("editor",))
+        token = auth_identity_var.set(identity)
+        try:
+            await router.handle_call("any.tool", {})  # NO identity in extra
+        finally:
+            auth_identity_var.reset(token)
+
+        ctx = captured_context["context"]
+        assert ctx is not None, "executor must have received a Context"
+        assert ctx.identity is not None, "router must fall back to auth_identity_var"
+        assert ctx.identity.id == "ctxvar-user"
+        assert ctx.identity.roles == ("editor",)
+
+    async def test_extra_identity_takes_precedence_over_context_var(self) -> None:
+        """[A-D-211] When both sources are present, ``extra['identity']`` wins."""
+        captured_context: dict[str, Any] = {}
+
+        class CapturingExecutor:
+            async def call_async(
+                self,
+                module_id: str,
+                inputs: dict[str, Any],
+                context: Any = None,
+                version_hint: str | None = None,
+            ) -> Any:
+                captured_context["context"] = context
+                return {"ok": True}
+
+        router = ExecutionRouter(CapturingExecutor())
+        ctxvar_identity = Identity(id="ctxvar-user", type="user", roles=("reader",))
+        extra_identity = Identity(id="extra-user", type="service", roles=("admin",))
+        token = auth_identity_var.set(ctxvar_identity)
+        try:
+            await router.handle_call("any.tool", {}, extra={"identity": extra_identity})
+        finally:
+            auth_identity_var.reset(token)
+
+        ctx = captured_context["context"]
+        assert ctx.identity.id == "extra-user"
+
 
 # ---------------------------------------------------------------------------
 # TC-AUTH-INT-002: Middleware → ContextVar → factory reads identity
