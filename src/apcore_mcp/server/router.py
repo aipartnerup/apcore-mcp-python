@@ -229,6 +229,63 @@ class ExecutionRouter:
         """
         logger.debug("Executing tool call: %s", tool_name)
 
+        # [B-002] [A-D-210] Register a CancelToken FIRST — before any
+        # dispatch (async-bridge, meta-tool, or executor) — so that an
+        # inbound MCP `notifications/cancelled` (forwarded by the transport
+        # into `router.cancel(call_id, reason)`) cooperatively cancels
+        # in-flight work regardless of which dispatch path the call takes.
+        # Pre-fix this lived AFTER async-bridge dispatch, leaving bridge
+        # submits invisible to cancel. TS (router.ts:369) and Rust
+        # (router.rs:755) register the guard first.
+        #
+        # The call_id is sourced from `extras.call_id`,
+        # `_meta.progressToken`, or generated. Removed in `finally`.
+        call_id: str | None = None
+        if extra is not None:
+            raw_id = extra.get("call_id")
+            if isinstance(raw_id, str | int):
+                call_id = str(raw_id)
+            else:
+                meta = extra.get("_meta")
+                if isinstance(meta, dict):
+                    pt = meta.get("progressToken")
+                    if isinstance(pt, str | int):
+                        call_id = str(pt)
+        if call_id is None:
+            call_id = uuid.uuid4().hex
+        cancel_token = CancelToken()
+        with self._cancel_lock:
+            # Tombstone case: cancel arrived before the token was
+            # registered (race). When `_cancel_tokens[call_id]` is already
+            # set with `is_cancelled=True`, propagate that state to the
+            # new token so the dispatch sees an already-cancelled call.
+            existing = self._cancel_tokens.get(call_id)
+            if existing is not None and existing.is_cancelled:
+                cancel_token.cancel()
+            # OrderedDict semantics: re-insertion keeps original position;
+            # explicit move_to_end ensures this entry is LRU-recent.
+            self._cancel_tokens[call_id] = cancel_token
+            self._cancel_tokens.move_to_end(call_id)
+            self._evict_cancel_tokens_locked()
+
+        try:
+            return await self._dispatch(tool_name, arguments, extra, cancel_token)
+        finally:
+            # [B-002] Always release the call_id → CancelToken slot so the
+            # map doesn't grow unboundedly and a later same-id call doesn't
+            # see a stale token.
+            with self._cancel_lock:
+                self._cancel_tokens.pop(call_id, None)
+
+    async def _dispatch(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        extra: dict[str, Any] | None,
+        cancel_token: CancelToken,
+    ) -> tuple[list[dict[str, Any]], bool, str | None]:
+        """Inner dispatch: async-bridge → streaming → call_async, with the
+        already-registered ``cancel_token`` attached to every Context."""
         # ── F-043 AsyncTaskBridge dispatch (defense-in-depth) ────────────
         # The canonical production path dispatches at the factory's
         # register_handlers callsite, but if the router was constructed
@@ -254,6 +311,9 @@ class ExecutionRouter:
                         data={},
                         identity=(extra or {}).get("identity"),
                     )
+                    # [A-D-210] Attach the already-registered cancel token so
+                    # the bridged submit observes cooperative cancellation.
+                    submit_ctx.cancel_token = cancel_token
                     try:
                         envelope = await self._async_bridge.submit(
                             tool_name,
@@ -342,39 +402,6 @@ class ExecutionRouter:
                     trace_parent = TraceContext.extract({"traceparent": raw_tp})
 
         context = Context.create(data=context_data, identity=identity, trace_parent=trace_parent)
-
-        # [B-002] Register a CancelToken for this call so that an inbound
-        # MCP `notifications/cancelled` (forwarded by the transport into
-        # `router.cancel(call_id, reason)`) cooperatively cancels in-flight
-        # work. The call_id is sourced from `extras.call_id`,
-        # `_meta.progressToken`, or generated. Removed in `finally`.
-        call_id: str | None = None
-        if extra is not None:
-            raw_id = extra.get("call_id")
-            if isinstance(raw_id, str | int):
-                call_id = str(raw_id)
-            else:
-                meta = extra.get("_meta")
-                if isinstance(meta, dict):
-                    pt = meta.get("progressToken")
-                    if isinstance(pt, str | int):
-                        call_id = str(pt)
-        if call_id is None:
-            call_id = uuid.uuid4().hex
-        cancel_token = CancelToken()
-        with self._cancel_lock:
-            # Tombstone case: cancel arrived before the token was
-            # registered (race). When `_cancel_tokens[call_id]` is already
-            # set with `is_cancelled=True`, propagate that state to the
-            # new token so the dispatch sees an already-cancelled call.
-            existing = self._cancel_tokens.get(call_id)
-            if existing is not None and existing.is_cancelled:
-                cancel_token.cancel()
-            # OrderedDict semantics: re-insertion keeps original position;
-            # explicit move_to_end ensures this entry is LRU-recent.
-            self._cancel_tokens[call_id] = cancel_token
-            self._cancel_tokens.move_to_end(call_id)
-            self._evict_cancel_tokens_locked()
         # Attach the token to the Context so executor can check it.
         context.cancel_token = cancel_token
 
@@ -440,25 +467,18 @@ class ExecutionRouter:
         # Streaming path: executor has stream() AND we have both helpers
         can_stream = hasattr(self._executor, "stream") and progress_token is not None and send_notification is not None
 
-        try:
-            if can_stream:
-                return await self._handle_stream(
-                    tool_name,
-                    arguments,
-                    progress_token,  # type: ignore[arg-type]
-                    send_notification,  # type: ignore[arg-type]
-                    context=context,
-                    version_hint=version_hint,
-                )
+        if can_stream:
+            return await self._handle_stream(
+                tool_name,
+                arguments,
+                progress_token,  # type: ignore[arg-type]
+                send_notification,  # type: ignore[arg-type]
+                context=context,
+                version_hint=version_hint,
+            )
 
-            # Non-streaming path
-            return await self._handle_call_async(tool_name, arguments, context=context, version_hint=version_hint)
-        finally:
-            # [B-002] Always release the call_id → CancelToken slot so the
-            # map doesn't grow unboundedly and a later same-id call doesn't
-            # see a stale token.
-            with self._cancel_lock:
-                self._cancel_tokens.pop(call_id, None)
+        # Non-streaming path
+        return await self._handle_call_async(tool_name, arguments, context=context, version_hint=version_hint)
 
     def _evict_cancel_tokens_locked(self) -> None:
         """Evict oldest entries when the cancel-tokens map exceeds the cap.

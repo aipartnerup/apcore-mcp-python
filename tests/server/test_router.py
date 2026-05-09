@@ -1172,3 +1172,70 @@ class TestCancellation:
         # Oldest entries must have been evicted
         assert "call-0" not in router._cancel_tokens
         assert f"call-{_CANCEL_TOKENS_MAX + 99}" in router._cancel_tokens
+
+    async def test_cancel_token_registered_before_async_bridge_dispatch(self) -> None:
+        """[A-D-210] Cancel must be observable for in-flight async-bridge submits.
+
+        Pre-fix bug: handle_call dispatched to ``async_bridge.submit`` BEFORE
+        registering the CancelToken. So a concurrent ``router.cancel(call_id)``
+        would only record a tombstone (returning False) and the in-flight call
+        would never see cancellation. TS (router.ts:369) and Rust
+        (router.rs:755) both register the token first.
+
+        This test asserts that while ``submit`` is suspended, ``router.cancel``
+        finds the registered token and returns True.
+        """
+        submit_started = asyncio.Event()
+        release_submit = asyncio.Event()
+        captured: dict[str, Any] = {}
+
+        class BlockingBridge:
+            @staticmethod
+            def is_meta_tool(_: str) -> bool:
+                return False
+
+            @staticmethod
+            def is_async_module(_: Any) -> bool:
+                return True
+
+            async def submit(
+                self,
+                module_id: str,
+                arguments: dict[str, Any],
+                context: Any,
+                *,
+                progress_token: Any = None,
+                send_notification: Any = None,
+            ) -> dict[str, Any]:
+                # Capture the cancel-token state observable from inside submit.
+                captured["context_cancel_token"] = getattr(context, "cancel_token", None)
+                submit_started.set()
+                await release_submit.wait()
+                return {"task_id": "task-1", "status": "pending"}
+
+        class StubExec:
+            async def call_async(self, *args: Any, **kwargs: Any) -> Any:
+                return {}
+
+        router = ExecutionRouter(
+            StubExec(),
+            async_bridge=BlockingBridge(),
+            descriptor_lookup=lambda _: object(),
+        )
+
+        call_id = "race-call-1"
+        # Kick off the bridged submit in the background.
+        task = asyncio.create_task(
+            router.handle_call("heavy.module", {}, extra={"call_id": call_id})
+        )
+        # Wait until submit has started so we know handle_call is mid-dispatch.
+        await asyncio.wait_for(submit_started.wait(), timeout=2.0)
+
+        # Concurrent cancel — must find the registered token, NOT just record a
+        # tombstone. Pre-fix this returns False (token not yet registered).
+        ok = router.cancel(call_id, reason="user-abort")
+        assert ok is True, "router.cancel must find the in-flight token"
+
+        # Release the submit and let handle_call complete.
+        release_submit.set()
+        await asyncio.wait_for(task, timeout=2.0)
