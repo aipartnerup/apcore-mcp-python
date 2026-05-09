@@ -37,6 +37,7 @@ META_TOOL_NAMES = (
     "__apcore_task_status",
     "__apcore_task_cancel",
     "__apcore_task_list",
+    "__apcore_module_preview",
 )
 
 
@@ -61,6 +62,36 @@ def _task_info_to_dict(info: TaskInfo) -> dict[str, Any]:
     }
 
 
+def _preflight_to_dict(result: Any) -> dict[str, Any]:
+    """Project a :class:`PreflightResult` to a JSON-safe dict for MCP transport.
+
+    Mirrors the cross-SDK preview envelope: ``valid``, ``requires_approval``,
+    ``predicted_changes`` (list of ``Change`` records), and ``checks``.
+    """
+    checks: list[dict[str, Any]] = []
+    for c in getattr(result, "checks", None) or []:
+        entry: dict[str, Any] = {"check": c.check, "passed": c.passed}
+        if getattr(c, "error", None):
+            entry["error"] = c.error
+        if getattr(c, "warnings", None):
+            entry["warnings"] = list(c.warnings)
+        checks.append(entry)
+    predicted: list[dict[str, Any]] = []
+    for change in getattr(result, "predicted_changes", None) or []:
+        if hasattr(change, "model_dump"):
+            predicted.append(change.model_dump(exclude_none=True))
+        elif hasattr(change, "dict"):
+            predicted.append(change.dict(exclude_none=True))
+        else:
+            predicted.append(dict(change))
+    return {
+        "valid": bool(getattr(result, "valid", False)),
+        "requires_approval": bool(getattr(result, "requires_approval", False)),
+        "predicted_changes": predicted,
+        "checks": checks,
+    }
+
+
 class AsyncTaskBridge:
     """Thin routing layer in front of :class:`AsyncTaskManager`.
 
@@ -79,9 +110,15 @@ class AsyncTaskBridge:
         manager: AsyncTaskManager,
         *,
         redactor: Callable[[str, Any], Any] | None = None,
+        executor: Any | None = None,
     ) -> None:
         self._manager = manager
         self._redactor = redactor
+        # Executor reference used by ``__apcore_module_preview`` to drive
+        # ``executor.validate()``. Falls back to the manager's bound
+        # executor when not supplied (the common path — bridge is intimate
+        # with its manager and the manager always has one).
+        self._executor = executor if executor is not None else getattr(manager, "_executor", None)
         self._error_mapper = ErrorMapper()
         # Maps task_id -> (progress_token, send_notification) for fan-out.
         self._progress_bindings: dict[str, tuple[Any, Callable[[dict[str, Any]], Awaitable[None]]]] = {}
@@ -110,7 +147,7 @@ class AsyncTaskBridge:
         on caller correctness. [A-D-028]
         """
         manager = AsyncTaskManager(executor, max_concurrent, max_tasks)
-        return cls(manager, redactor=redactor)
+        return cls(manager, redactor=redactor, executor=executor)
 
     @property
     def manager(self) -> AsyncTaskManager:
@@ -288,6 +325,26 @@ class AsyncTaskBridge:
                     "additionalProperties": False,
                 },
             ),
+            mcp_types.Tool(
+                name="__apcore_module_preview",
+                description=(
+                    "Preview a module call: predict state changes, validate inputs, "
+                    "and check approval requirements WITHOUT executing the module. "
+                    "Returns {valid, requires_approval, predicted_changes, checks}. "
+                    "Use this before invoking destructive or stateful modules to let "
+                    "the AI orchestrator answer 'what would change in the world if I "
+                    "called this?' (apcore PROTOCOL_SPEC §5.6)."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "module_id": {"type": "string"},
+                        "arguments": {"type": "object"},
+                    },
+                    "required": ["module_id"],
+                    "additionalProperties": False,
+                },
+            ),
         ]
 
     @staticmethod
@@ -313,6 +370,8 @@ class AsyncTaskBridge:
                 return await self._handle_cancel_tool(args)
             if name == "__apcore_task_list":
                 return self._handle_list_tool(args)
+            if name == "__apcore_module_preview":
+                return await self._handle_preview_tool(args, router_extra or {})
         except TaskLimitExceededError as exc:
             return self._error_response(exc)
         except Exception as exc:
@@ -411,6 +470,53 @@ class AsyncTaskBridge:
                 return self._error_response(ValueError(f"Invalid status filter: {raw_status!r}"))
         tasks = self._manager.list_tasks(status_filter)
         return self._text_response({"tasks": [_task_info_to_dict(t) for t in tasks]})
+
+    async def _handle_preview_tool(
+        self,
+        args: dict[str, Any],
+        extra: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], bool, str | None]:
+        """Run executor.validate() and return predicted_changes envelope.
+
+        apcore PROTOCOL_SPEC §5.6 / §12.8 — surfaces ``Module.preview()`` and
+        the rest of the dry-run preflight checks (input validation, ACL,
+        approval requirement) to MCP clients without side effects.
+
+        ``arguments: null`` is preserved verbatim (passed as ``None`` to
+        ``executor.validate``) — the calling business decides whether
+        null is a valid input. We reject only structurally-wrong
+        types (array, scalar) that can never represent a JSON object.
+        """
+        module_id = args.get("module_id")
+        if not isinstance(module_id, str) or not module_id:
+            return self._error_response(ValueError("module_id is required"))
+        # Preserve null/missing as None — let the module's preflight
+        # rules decide whether absent inputs are acceptable. Reject only
+        # structurally-impossible shapes (lists, scalars, etc.).
+        raw_args = args.get("arguments")
+        if raw_args is not None and not isinstance(raw_args, dict):
+            return self._error_response(ValueError("arguments must be an object or null"))
+        executor = self._executor
+        if executor is None:
+            return self._text_response(
+                {
+                    "error": "PREVIEW_UNAVAILABLE",
+                    "message": (
+                        "Module preview requires an Executor reference; bridge was "
+                        "built without one (apcore-mcp internal)."
+                    ),
+                },
+                is_error=True,
+            )
+        context = self._build_context(extra)
+        # apcore.Executor.validate is synchronous and never raises on
+        # input-shape errors — it returns a structured PreflightResult with
+        # `valid=false` instead. Run in a worker thread because validate()
+        # internally drives an event loop via _run_async_in_sync.
+        import asyncio as _asyncio
+
+        result = await _asyncio.to_thread(executor.validate, module_id, raw_args, context)
+        return self._text_response(_preflight_to_dict(result))
 
     # ── Helpers ─────────────────────────────────────────────────────────
 

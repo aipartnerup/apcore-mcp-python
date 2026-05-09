@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from apcore.schema.strict import _apply_llm_descriptions, to_strict_schema
 
+import apcore_mcp.markdown as _markdown
 from apcore_mcp.adapters.annotations import AnnotationMapper
 from apcore_mcp.adapters.id_normalizer import ModuleIDNormalizer
 from apcore_mcp.adapters.schema import SchemaConverter
+
+_logger = logging.getLogger(__name__)
 
 
 class OpenAIConverter:
@@ -19,6 +23,10 @@ class OpenAIConverter:
         self._schema_converter = SchemaConverter()
         self._annotation_mapper = AnnotationMapper()
         self._id_normalizer = ModuleIDNormalizer()
+        # One-shot flag: warn about missing apcore-toolkit at most once
+        # per converter instance instead of once per descriptor (mirrors
+        # MCPServerFactory._warned_toolkit_missing).
+        self._warned_toolkit_missing = False
 
     def convert_registry(
         self,
@@ -27,6 +35,7 @@ class OpenAIConverter:
         strict: bool = False,
         tags: list[str] | None = None,
         prefix: str | None = None,
+        rich_description: bool = False,
     ) -> list[dict[str, Any]]:
         """Convert all modules in a Registry to OpenAI tool definitions.
 
@@ -40,6 +49,14 @@ class OpenAIConverter:
             strict: If True, enable OpenAI strict mode on schemas.
             tags: Optional tag filter passed to registry.list().
             prefix: Optional prefix filter passed to registry.list().
+            rich_description: If True, replace the plain ``description`` with
+                an apcore-toolkit-rendered Markdown body (title, description,
+                annotations table, schema, examples). LLMs select tools
+                primarily from this string — Markdown delivers more signal
+                per token than a single-line summary. Requires the
+                ``[markdown]`` extra (``apcore-toolkit``); falls back to
+                the plain description with a WARN log when toolkit is
+                unavailable.
 
         Returns:
             List of OpenAI-compatible tool definition dicts.
@@ -61,6 +78,7 @@ class OpenAIConverter:
                 descriptor,
                 embed_annotations=embed_annotations,
                 strict=strict,
+                rich_description=rich_description,
             )
             tool_name = tool["function"]["name"]
             if tool_name in seen_names and seen_names[tool_name] != module_id:
@@ -80,6 +98,7 @@ class OpenAIConverter:
         descriptor: Any,
         embed_annotations: bool = False,
         strict: bool = False,
+        rich_description: bool = False,
     ) -> dict[str, Any]:
         """Convert a single ModuleDescriptor to OpenAI tool definition.
 
@@ -88,6 +107,8 @@ class OpenAIConverter:
                 and optional annotations.
             embed_annotations: If True, append annotation hints to description.
             strict: If True, enable OpenAI strict mode.
+            rich_description: If True, render the description as
+                apcore-toolkit Markdown (see :func:`convert_registry`).
 
         Returns:
             Dict with structure:
@@ -104,13 +125,11 @@ class OpenAIConverter:
         name = self._id_normalizer.normalize(descriptor.module_id)
         parameters = self._schema_converter.convert_input_schema(descriptor)
 
-        # Build description with optional annotation suffix
-        description = descriptor.description
-        if embed_annotations:
-            suffix = self._annotation_mapper.to_description_suffix(
-                descriptor.annotations,
-            )
-            description += suffix
+        description = self._render_description(
+            descriptor,
+            embed_annotations=embed_annotations,
+            rich_description=rich_description,
+        )
 
         # Apply strict mode transformations if requested
         if strict:
@@ -130,6 +149,44 @@ class OpenAIConverter:
             "type": "function",
             "function": function,
         }
+
+    def _render_description(
+        self,
+        descriptor: Any,
+        *,
+        embed_annotations: bool,
+        rich_description: bool,
+    ) -> str:
+        """Resolve the OpenAI ``description`` field for a module descriptor.
+
+        ``rich_description`` takes precedence: when toolkit is installed
+        the LLM-facing description is the canonical Markdown rendering
+        from ``apcore_toolkit.format_module``. ``embed_annotations`` is
+        still honoured (suffix appended) as a strict superset.
+        """
+        base = descriptor.description or ""
+        if rich_description:
+            if _markdown.is_available():
+                try:
+                    base = _markdown.render_module_markdown(descriptor)
+                except Exception:
+                    _logger.warning(
+                        "rich_description: format_module failed for %s; " "falling back to plain description",
+                        descriptor.module_id,
+                        exc_info=True,
+                    )
+            elif not self._warned_toolkit_missing:
+                self._warned_toolkit_missing = True
+                _logger.warning(
+                    "rich_description: apcore-toolkit not installed; "
+                    "install 'apcore-mcp[markdown]' to enable Markdown "
+                    "tool descriptions. Falling back to plain descriptions."
+                )
+        if embed_annotations:
+            base += self._annotation_mapper.to_description_suffix(
+                descriptor.annotations,
+            )
+        return base
 
     def _apply_strict_mode(self, schema: dict[str, Any]) -> dict[str, Any]:
         """Convert schema to OpenAI strict mode via apcore's to_strict_schema().

@@ -278,3 +278,132 @@ async def test_submit_raises_task_limit_directly() -> None:
     await bridge.submit("a", {}, None)
     with pytest.raises(TaskLimitExceededError):
         await bridge.submit("b", {}, None)
+
+
+# ---------------------------------------------------------------------------
+# __apcore_module_preview meta-tool (apcore 0.21 PROTOCOL_SPEC §5.6)
+# ---------------------------------------------------------------------------
+
+
+def test_preview_meta_tool_is_registered() -> None:
+    bridge = AsyncTaskBridge(AsyncTaskManager(_SlowExecutor()))
+    names = [t.name for t in bridge.build_meta_tools()]
+    assert "__apcore_module_preview" in names
+
+
+@pytest.mark.asyncio
+async def test_preview_meta_tool_returns_predicted_changes() -> None:
+    """Preview drives executor.validate() and surfaces predicted_changes."""
+    from apcore import Change, Context, PreviewResult, Registry
+    from apcore.executor import Executor
+    from apcore.module import Module
+
+    class _PreviewableModule(Module):
+        input_schema = {"type": "object"}
+        output_schema = {"type": "object"}
+
+        def execute(self, inputs: Any, context: Context | None = None) -> Any:
+            return {}
+
+        def preview(self, inputs: Any, context: Context | None = None) -> PreviewResult:
+            return PreviewResult(changes=[Change(action="create", target="row:42", summary="insert row")])
+
+    registry = Registry()
+    registry.register("demo.preview", _PreviewableModule())
+    executor = Executor(registry)
+    mgr = AsyncTaskManager(executor)
+    bridge = AsyncTaskBridge(mgr)
+
+    content, is_error, _ = await bridge.handle_meta_tool(
+        "__apcore_module_preview",
+        {"module_id": "demo.preview", "arguments": {}},
+    )
+    assert is_error is False
+    payload = json.loads(content[0]["text"])
+    assert payload["valid"] is True
+    assert any(c["action"] == "create" for c in payload["predicted_changes"])
+    assert any(c["check"] == "module_preview" for c in payload["checks"])
+
+
+@pytest.mark.asyncio
+async def test_preview_meta_tool_rejects_missing_module_id() -> None:
+    bridge = AsyncTaskBridge(AsyncTaskManager(_SlowExecutor()))
+    content, is_error, _ = await bridge.handle_meta_tool(
+        "__apcore_module_preview",
+        {"arguments": {}},
+    )
+    assert is_error is True
+    # The error is mapped through ErrorMapper which sanitizes to "Internal
+    # error occurred"; the important contract is that is_error is True.
+
+
+@pytest.mark.asyncio
+async def test_preview_meta_tool_preserves_arguments_null() -> None:
+    """`arguments: null` must reach executor.validate() as None — the
+    calling business decides whether null is acceptable. Pre-fix code
+    silently coerced to `{}` via `args.get("arguments") or {}`."""
+
+    captured: list[Any] = []
+
+    class _Spy:
+        def validate(self, module_id: str, inputs: Any, context: Any) -> Any:
+            captured.append((module_id, inputs))
+
+            class _Result:
+                valid = True
+                requires_approval = False
+                checks: list[Any] = []
+                predicted_changes: list[Any] = []
+
+            return _Result()
+
+    bridge = AsyncTaskBridge(
+        AsyncTaskManager(_SlowExecutor()),
+        executor=_Spy(),  # type: ignore[arg-type]
+    )
+    await bridge.handle_meta_tool(
+        "__apcore_module_preview",
+        {"module_id": "demo.x", "arguments": None},
+    )
+    assert captured == [
+        ("demo.x", None)
+    ], f"executor.validate must receive inputs=None when arguments is null; got {captured}"
+
+    # Same for missing arguments — both paths collapse to None for
+    # cross-SDK consistency with TS+Rust.
+    captured.clear()
+    await bridge.handle_meta_tool(
+        "__apcore_module_preview",
+        {"module_id": "demo.x"},
+    )
+    assert captured == [("demo.x", None)], f"missing arguments must also pass inputs=None; got {captured}"
+
+
+@pytest.mark.asyncio
+async def test_preview_meta_tool_rejects_non_object_arguments() -> None:
+    """Structurally-wrong shapes (array, scalar) must be rejected."""
+    bridge = AsyncTaskBridge(AsyncTaskManager(_SlowExecutor()))
+    content, is_error, _ = await bridge.handle_meta_tool(
+        "__apcore_module_preview",
+        {"module_id": "demo.x", "arguments": [1, 2, 3]},
+    )
+    assert is_error is True
+
+
+# ---------------------------------------------------------------------------
+# CIRCUIT_BREAKER_OPEN error mapping (apcore 0.20 sync alignment A-001)
+# ---------------------------------------------------------------------------
+
+
+def test_error_mapper_handles_circuit_breaker_open() -> None:
+    from apcore.errors import CircuitBreakerOpenError
+
+    from apcore_mcp.adapters.errors import ErrorMapper
+
+    err = CircuitBreakerOpenError("demo.module")
+    mapped = ErrorMapper().to_mcp_error(err)
+    assert mapped["errorType"] == "CIRCUIT_BREAKER_OPEN"
+    assert mapped["retryable"] is True
+    # The guidance comes from CircuitBreakerOpenError's default ai_guidance
+    # (per-module recovery hint) which the mapper mirrors onto aiGuidance.
+    assert "demo.module" in mapped["aiGuidance"]

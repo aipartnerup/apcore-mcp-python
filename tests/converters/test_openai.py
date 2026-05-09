@@ -567,3 +567,67 @@ class TestStrictModeEdgeCases:
         assert params["properties"]["query"]["description"] == "LLM-optimized description"
         # x-llm-description key itself should be stripped
         assert "x-llm-description" not in params["properties"]["query"]
+
+
+# ---------------------------------------------------------------------------
+# rich_description: apcore-toolkit format_module integration (apcore-toolkit
+# 0.6+, surface-aware formatters). LLMs select tools primarily from the
+# `description` string — Markdown packs more decision-relevant signal per
+# token than a single-line summary.
+# ---------------------------------------------------------------------------
+
+
+class TestRichDescription:
+    """Tests for OpenAIConverter rich_description=True."""
+
+    def test_rich_description_renders_markdown(self, simple_descriptor):
+        """rich_description=True swaps the plain description for a Markdown body."""
+        converter = OpenAIConverter()
+        plain = converter.convert_descriptor(simple_descriptor)["function"]["description"]
+        rich = converter.convert_descriptor(simple_descriptor, rich_description=True)["function"]["description"]
+        assert rich != plain
+        # Toolkit's markdown body always opens with a `# <title>` heading.
+        assert rich.startswith("# ")
+        # The original short description must be embedded within the Markdown.
+        assert simple_descriptor.description in rich
+        # Tags from the descriptor flow through to the Markdown.
+        assert "image" in rich
+        # Toolkit emits "## Parameters" + "## Returns" sections derived
+        # from input_schema and output_schema.
+        assert "## Parameters" in rich
+        assert "## Returns" in rich
+
+    def test_rich_description_with_embed_annotations(self, simple_descriptor):
+        """rich_description and embed_annotations compose — annotation suffix wins."""
+        converter = OpenAIConverter()
+        rich = converter.convert_descriptor(
+            simple_descriptor,
+            rich_description=True,
+            embed_annotations=True,
+        )["function"]["description"]
+        # Annotation suffix is appended after the Markdown body.
+        assert "# " in rich  # markdown
+        # AnnotationMapper.to_description_suffix carries idempotent=True hint.
+        assert "idempotent" in rich.lower()
+
+    def test_rich_description_falls_back_when_toolkit_missing(
+        self,
+        simple_descriptor,
+        monkeypatch,
+    ):
+        """When apcore-toolkit is unavailable, fall back to plain description with WARN."""
+        from apcore_mcp.converters import openai as openai_mod
+
+        monkeypatch.setattr(openai_mod._markdown, "is_available", lambda: False)
+        converter = OpenAIConverter()
+        rich = converter.convert_descriptor(simple_descriptor, rich_description=True)["function"]["description"]
+        # Falls back to descriptor.description verbatim.
+        assert rich == simple_descriptor.description
+
+    def test_convert_registry_propagates_rich_description(self, simple_descriptor):
+        """rich_description on convert_registry flows through to every tool."""
+        converter = OpenAIConverter()
+        registry = StubRegistry([simple_descriptor])
+        tools = converter.convert_registry(registry, rich_description=True)
+        assert len(tools) == 1
+        assert tools[0]["function"]["description"].startswith("# ")

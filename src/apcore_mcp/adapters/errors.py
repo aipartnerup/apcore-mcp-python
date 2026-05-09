@@ -12,6 +12,16 @@ from apcore.errors import (
     TaskLimitExceededError,
 )
 
+# apcore 0.20.0 introduced ``CircuitBreakerOpenError`` as the canonical
+# replacement for the legacy ``CircuitOpenError`` (sync alignment A-001).
+# Both classes inherit from ``ModuleError``; we do best-effort import so
+# pre-0.20 builds still work — the ``isinstance`` branch below is skipped
+# when the symbol is absent.
+try:  # pragma: no cover - import shim
+    from apcore.errors import CircuitBreakerOpenError  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover
+    CircuitBreakerOpenError = None  # type: ignore[assignment,misc]
+
 from apcore_mcp.constants import ERROR_CODES
 
 
@@ -84,6 +94,22 @@ class ErrorMapper:
             result = {
                 "isError": True,
                 "errorType": ERROR_CODES["TASK_LIMIT_EXCEEDED"],
+                "message": getattr(error, "message", str(error)),
+                "details": getattr(error, "details", None),
+                "retryable": True,
+            }
+            self._attach_ai_guidance(error, result)
+            return result
+        # apcore 0.20.0: surface circuit-breaker rejections with a
+        # retryable=true envelope and an AI-facing recovery hint so the
+        # orchestrator backs off until the recovery window elapses. The
+        # error class already populates ``ai_guidance`` with the per-module
+        # recovery message; ``_attach_ai_guidance`` mirrors it onto the
+        # MCP envelope under the canonical ``aiGuidance`` key.
+        if CircuitBreakerOpenError is not None and isinstance(error, CircuitBreakerOpenError):
+            result = {
+                "isError": True,
+                "errorType": ERROR_CODES["CIRCUIT_BREAKER_OPEN"],
                 "message": getattr(error, "message", str(error)),
                 "details": getattr(error, "details", None),
                 "retryable": True,

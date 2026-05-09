@@ -13,6 +13,7 @@ from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.models import InitializationOptions
 from pydantic import AnyUrl
 
+import apcore_mcp.markdown as _markdown
 from apcore_mcp.adapters.annotations import AnnotationMapper
 from apcore_mcp.adapters.schema import SchemaConverter
 from apcore_mcp.auth.middleware import auth_identity_var
@@ -28,8 +29,21 @@ _AI_INTENT_KEYS = ("x-when-to-use", "x-when-not-to-use", "x-common-mistakes", "x
 class MCPServerFactory:
     """Creates and configures MCP Server instances from apcore Registry."""
 
-    def __init__(self, *, strict: bool = True) -> None:
+    def __init__(self, *, strict: bool = True, rich_description: bool = False) -> None:
         self._strict = strict
+        # When ``rich_description`` is True, MCP Tool descriptions are
+        # rendered as apcore-toolkit Markdown (title, description,
+        # behavior table, schemas, examples) instead of the plain
+        # one-line description. LLMs select tools primarily from this
+        # field — Markdown packs more decision-relevant signal per
+        # token. Requires apcore-toolkit (install via the
+        # ``[markdown]`` extra); falls back to plain text + WARN log
+        # when toolkit is unavailable.
+        self._rich_description = rich_description
+        # One-shot flag so we only log a single "toolkit missing" WARN
+        # per factory instance instead of one per descriptor (matches
+        # the TS factory's `_warnedToolkitMissing` guard).
+        self._warned_toolkit_missing = False
         self._schema_converter = SchemaConverter(strict=strict)
         self._annotation_mapper = AnnotationMapper()
         self._schema_exporter = SchemaExporter()
@@ -139,7 +153,32 @@ class MCPServerFactory:
         mcp_display = display.get("mcp") or {}
 
         tool_name: str = mcp_display.get("alias") or descriptor.module_id
-        description: str = mcp_display.get("description") or descriptor.description
+        # Display-overlay ``mcp.description`` is a hard override the
+        # operator typed by hand — it always wins, even when
+        # ``rich_description=True`` is enabled. Otherwise, when rich
+        # descriptions are on, the LLM-facing description is rendered
+        # via apcore-toolkit's ``format_module``.
+        if mcp_display.get("description"):
+            description = mcp_display["description"]
+        elif self._rich_description and _markdown.is_available():
+            try:
+                description = _markdown.render_module_markdown(descriptor)
+            except Exception:
+                logger.warning(
+                    "rich_description: format_module failed for %s; " "falling back to plain description",
+                    descriptor.module_id,
+                    exc_info=True,
+                )
+                description = descriptor.description
+        else:
+            if self._rich_description and not _markdown.is_available() and not self._warned_toolkit_missing:
+                self._warned_toolkit_missing = True
+                logger.warning(
+                    "rich_description: apcore-toolkit not installed; "
+                    "install 'apcore-mcp[markdown]' to enable Markdown "
+                    "tool descriptions. Falling back to plain descriptions."
+                )
+            description = descriptor.description
 
         # Append guidance if present (AI usage hints)
         guidance: str | None = mcp_display.get("guidance")

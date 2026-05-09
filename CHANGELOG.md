@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-05-09
+
+Leverages **apcore 0.21.0 + apcore-toolkit 0.6.0**. Promotes three new
+upstream capabilities into MCP-facing surface area: `Module.preview()`
+(PROTOCOL_SPEC §5.6), `CircuitBreakerOpenError` (sync alignment A-001),
+and `apcore_toolkit.format_module(style="markdown")`. Cross-SDK byte-
+equivalent with `apcore-mcp-rust` and `apcore-mcp-typescript` 0.15.0.
+
+### Changed
+
+- **Dependency bump**: `apcore >= 0.21.0` (was `>= 0.19.0`); `apcore-toolkit >= 0.6.0` (was `>= 0.5.0`, optional `[markdown]` extra).
+
+### Added
+
+- **`__apcore_module_preview` meta-tool** (apcore 0.21 PROTOCOL_SPEC §5.6 / §12.8) — fifth reserved meta-tool alongside the four `__apcore_task_*` ones. Drives `executor.validate(module_id, inputs, context)` and returns a structured `{valid, requires_approval, predicted_changes, checks}` envelope WITHOUT executing the module. Lets AI orchestrators answer "what would change in the world if I called this?" before invoking destructive or stateful modules. `arguments: null` is preserved verbatim — the calling business decides whether null is a valid input. Structurally-impossible shapes (arrays, scalars) return a typed validation error.
+- **`AsyncTaskBridge(executor=...)` constructor kwarg** — explicit Executor reference for the preview meta-tool. When omitted, falls back to the manager's bound executor. The `with_limits` factory wires this automatically.
+- **`MCPServerFactory(rich_description=True)`** and **`OpenAIConverter.convert_descriptor(rich_description=True)` / `convert_registry(rich_description=True)`** — render `Tool.description` / OpenAI `function.description` as canonical apcore-toolkit Markdown (`format_module(style="markdown")`) instead of the plain one-line description. Includes title, description, parameters list, returns list, behavior table (only fields differing from defaults — toolkit 0.6 alignment), tags, and examples. LLMs select tools primarily from this string; Markdown packs more decision-relevant signal per token. Display-overlay `mcp.description` overrides still win first. One-shot WARN log when `apcore-toolkit` is not installed (recommend `pip install 'apcore-mcp[markdown]'`).
+- **`apcore_mcp.markdown` module** — public helpers: `is_available()`, `descriptor_to_scanned_module(descriptor)`, `render_module_markdown(descriptor, *, display=True)`. The descriptor adapter is forwards-compatible across toolkit minor versions (introspects `dataclasses.fields(ScannedModule)` to drop unknown kwargs).
+- **`CIRCUIT_BREAKER_OPEN` error mapping** (apcore 0.20 sync alignment A-001) — `ErrorMapper.to_mcp_error` now dispatches `apcore.errors.CircuitBreakerOpenError` to a retryable=True envelope with the per-module `aiGuidance` mirrored from the apcore error class. New constant `ERROR_CODES["CIRCUIT_BREAKER_OPEN"]`. Best-effort import shim keeps the mapper compatible with pre-0.20 apcore builds.
+
+### Fixed
+
+- **`AsyncTaskBridge` async-API alignment with apcore 0.20+** — adapts to apcore's `AsyncTaskManager.{submit,cancel,shutdown}` becoming async (D10-003 / D10-004). Bridge methods now `await` upstream calls; sync transport-layer cancel handlers route through `tokio`-style fire-and-forget patterns where applicable.
+- **`__apcore_task_status` redactor try/except symmetry** — wraps the redactor call so a buggy redactor does not bring down the meta-tool; falls back to the unredacted result with a DEBUG log.
+
+### Tests
+
+- +9 new tests covering `__apcore_module_preview` (basic predict, missing module_id, `arguments: null` preserved, missing arguments preserved, array rejection, meta-tool registration), `CIRCUIT_BREAKER_OPEN` mapping (retryable + aiGuidance), and `rich_description` (Markdown rendering, display-overlay override, toolkit-missing fallback, `convert_registry` propagation, factory build_tool integration).
+- Total suite: **771 passed** (was 758).
+
 ## [0.14.0] - 2026-05-01
 
 ### Changed

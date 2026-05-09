@@ -406,9 +406,7 @@ def serve(
         # Strict-mode schemas strip defaults and mark optional fields as
         # ["string","null"], which surfaces as `null` in the form. Build a
         # parallel non-strict tool list so humans see the real defaults.
-        explorer_tools = MCPServerFactory(strict=False).build_tools(
-            registry, tags=tags, prefix=prefix, strict=False
-        )
+        explorer_tools = MCPServerFactory(strict=False).build_tools(registry, tags=tags, prefix=prefix, strict=False)
         extra_routes = [
             create_explorer_mount(
                 explorer_tools,
@@ -715,9 +713,7 @@ async def async_serve(
 
         # See serve() for rationale: the Explorer is a human UI; strict-mode
         # schemas hide defaults and add nullable types that confuse the form.
-        explorer_tools = MCPServerFactory(strict=False).build_tools(
-            registry, tags=tags, prefix=prefix, strict=False
-        )
+        explorer_tools = MCPServerFactory(strict=False).build_tools(registry, tags=tags, prefix=prefix, strict=False)
         extra_routes = [
             create_explorer_mount(
                 explorer_tools,

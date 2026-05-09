@@ -612,3 +612,42 @@ class TestBuildInitOptions:
         assert opts.server_name == "test-server"
         assert opts.server_version == "1.2.3"
         assert opts.capabilities is not None
+
+
+class TestRichDescription:
+    """Tests for MCPServerFactory rich_description=True (apcore-toolkit 0.6+)."""
+
+    def test_rich_description_renders_markdown(self, simple_descriptor):
+        plain_factory = MCPServerFactory()
+        rich_factory = MCPServerFactory(rich_description=True)
+        plain = plain_factory.build_tool(simple_descriptor).description
+        rich = rich_factory.build_tool(simple_descriptor).description
+        assert rich != plain
+        assert rich is not None
+        assert rich.startswith("# ")
+        # The original short description is embedded within the Markdown body.
+        assert simple_descriptor.description in rich
+
+    def test_rich_description_respects_display_overlay_override(self, simple_descriptor):
+        """Display-overlay mcp.description is a hard operator override and wins."""
+        simple_descriptor.metadata["display"] = {
+            "mcp": {"description": "Operator-typed override — keep verbatim"},
+        }
+        try:
+            factory = MCPServerFactory(rich_description=True)
+            tool = factory.build_tool(simple_descriptor)
+            assert tool.description == "Operator-typed override — keep verbatim"
+        finally:
+            simple_descriptor.metadata.pop("display", None)
+
+    def test_rich_description_falls_back_when_toolkit_missing(
+        self,
+        simple_descriptor,
+        monkeypatch,
+    ):
+        from apcore_mcp.server import factory as factory_mod
+
+        monkeypatch.setattr(factory_mod._markdown, "is_available", lambda: False)
+        factory = MCPServerFactory(rich_description=True)
+        tool = factory.build_tool(simple_descriptor)
+        assert tool.description == simple_descriptor.description
