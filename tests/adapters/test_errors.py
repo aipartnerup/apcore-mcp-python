@@ -227,15 +227,50 @@ class TestErrorMapper:
         assert "internal" in result["message"].lower()
 
     def test_unexpected_exception(self, mapper: ErrorMapper) -> None:
-        """Unexpected exceptions become generic internal error with NO stack trace."""
+        """Unexpected exceptions become canonical GENERAL_INTERNAL_ERROR envelope (EM-6)."""
         error = ValueError("oops")
         result = mapper.to_mcp_error(error)
 
         assert result["isError"] is True
-        assert result["errorType"] == "INTERNAL_ERROR"
+        assert result["errorType"] == "GENERAL_INTERNAL_ERROR"
         assert "internal error" in result["message"].lower()
         # Should NOT leak the original error message
         assert "oops" not in result["message"]
+        # Canonical envelope: details is None
+        assert result["details"] is None
+
+    def test_internal_error_response_helper_envelope(self) -> None:
+        """internal_error_response() returns the canonical GENERAL_INTERNAL_ERROR envelope (EM-6)."""
+        from apcore_mcp.adapters.errors import internal_error_response
+
+        envelope = internal_error_response()
+        assert envelope == {
+            "isError": True,
+            "errorType": "GENERAL_INTERNAL_ERROR",
+            "message": "Internal error occurred",
+            "details": None,
+        }
+
+    def test_to_mcp_error_any_ignores_input_contents(self) -> None:
+        """to_mcp_error_any returns the canonical envelope regardless of input.
+
+        Spec EM-6: the helper deliberately ignores the error's class, message,
+        traceback, and details to avoid leaking server-side state.
+        """
+        from apcore_mcp.adapters.errors import internal_error_response, to_mcp_error_any
+
+        canonical = internal_error_response()
+        # Free-function form: never leaks input contents
+        assert to_mcp_error_any(ValueError("secret-detail-XYZ")) == canonical
+        assert to_mcp_error_any(RuntimeError("api-key-leak")) == canonical
+        assert to_mcp_error_any({"unexpected": "shape"}) == canonical
+        assert to_mcp_error_any(None) == canonical
+
+    def test_to_mcp_error_any_method_form_matches_helper(self, mapper: ErrorMapper) -> None:
+        """ErrorMapper.to_mcp_error_any (method form) is symmetric with the free helper."""
+        from apcore_mcp.adapters.errors import internal_error_response
+
+        assert mapper.to_mcp_error_any(RuntimeError("boom")) == internal_error_response()
 
     def test_all_errors_set_is_error(self, mapper: ErrorMapper) -> None:
         """Every error type returns is_error=True."""

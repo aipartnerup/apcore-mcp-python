@@ -140,13 +140,20 @@ class ErrorMapper:
         ):
             return self._handle_apcore_error(error)
 
-        # Unknown exception - sanitize completely
-        return {
-            "isError": True,
-            "errorType": ERROR_CODES["INTERNAL_ERROR"],
-            "message": "Internal error occurred",
-            "details": None,
-        }
+        # Unknown exception - sanitize completely.
+        # Emits GENERAL_INTERNAL_ERROR (not INTERNAL_ERROR) per spec EM-6 so MCP
+        # clients can branch on errorType === "GENERAL_INTERNAL_ERROR" portably.
+        return internal_error_response()
+
+    def to_mcp_error_any(self, error: Any) -> dict[str, Any]:
+        """Generic-error fallback for arbitrary inputs.
+
+        Returns the canonical GENERAL_INTERNAL_ERROR envelope unchanged. The
+        original error's class name, message, traceback, and details are
+        deliberately ignored (security: avoid leaking server-side state).
+        """
+        del error
+        return internal_error_response()
 
     # Map apcore ModuleError attribute names (snake_case) to MCP wire format (camelCase).
     # The wire format uses camelCase to match MCP convention and TypeScript output.
@@ -316,3 +323,29 @@ class ErrorMapper:
             error_lines.append(f"{field}: {msg}")
 
         return "Schema validation failed:\n" + "\n".join(f"  {line}" for line in error_lines)
+
+
+def internal_error_response() -> dict[str, Any]:
+    """Canonical GENERAL_INTERNAL_ERROR envelope for non-ModuleError fallback.
+
+    All three SDKs (Python, TypeScript, Rust) emit byte-identical envelopes
+    so MCP clients can branch on `errorType === "GENERAL_INTERNAL_ERROR"`
+    portably. See ``apcore-mcp/docs/features/error-mapper.md`` (EM-6).
+    """
+    return {
+        "isError": True,
+        "errorType": ERROR_CODES["GENERAL_INTERNAL_ERROR"],
+        "message": "Internal error occurred",
+        "details": None,
+    }
+
+
+def to_mcp_error_any(error: Any) -> dict[str, Any]:
+    """Generic-error fallback for arbitrary inputs (free-function form).
+
+    The original error's class name, message, traceback, and details are
+    deliberately ignored (security: avoid leaking server-side state). Returns
+    the canonical envelope unchanged.
+    """
+    del error
+    return internal_error_response()
