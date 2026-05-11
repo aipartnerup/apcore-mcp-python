@@ -47,6 +47,17 @@ class TestAuthenticate:
         assert identity is not None
         assert identity.type == "service"
 
+    async def test_empty_type_claim_falls_back_to_user(self):
+        # [D11-107] An empty-string ``type`` claim must fall back to "user".
+        # Python's ``payload.get(...) or "user"`` evaluates the empty string
+        # as falsy and selects the default — this is the canonical behaviour
+        # that TS+Rust must mirror. This regression test pins it.
+        auth = JWTAuthenticator(key=SECRET)
+        token = _make_token({"sub": "user-empty", "type": ""})
+        identity = await auth.authenticate({"authorization": f"Bearer {token}"})
+        assert identity is not None
+        assert identity.type == "user"
+
     async def test_null_type_claim_falls_back_to_user(self):
         # Regression: dict.get(key, default) returns the default ONLY when
         # the key is absent — a present-but-null value returns None, which
