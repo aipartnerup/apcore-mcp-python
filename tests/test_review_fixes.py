@@ -359,21 +359,27 @@ class TestConfigBusExceptionNarrowing:
     """W3 — builder ValueErrors from malformed mcp.middleware/mcp.acl YAML must propagate."""
 
     def test_config_bus_import_error_is_swallowed(self) -> None:
-        """ImportError (apcore not installed) should still be silently swallowed."""
+        """ImportError (apcore not installed) should still be silently swallowed.
 
-        # Simulate a fresh resolve_executor call with a valid registry — just
-        # test the broad concept by verifying that the fix in __init__.py narrows
-        # the except clause. We verify the code structure directly.
+        After the D9-002 refactor, the Config Bus block was extracted into
+        ``_load_config_bus_overrides``; the narrowed ``except ImportError``
+        clause now lives there. ``serve()`` and ``async_serve()`` delegate
+        to the helper, inheriting its narrowed semantics.
+        """
+
         import inspect
 
         import apcore_mcp.__init__ as init_mod
 
-        src = inspect.getsource(init_mod.serve)
-        # After fix: except should be 'except ImportError', not 'except Exception'
-        # Verify the pattern exists somewhere in the source
-        assert (
-            "except ImportError" in src or "ImportError" in src
-        ), "serve() Config Bus block should catch ImportError, not broad Exception"
+        # The helper owns the narrowed except clause post-refactor.
+        helper_src = inspect.getsource(init_mod._load_config_bus_overrides)
+        assert "except ImportError" in helper_src, (
+            "_load_config_bus_overrides Config Bus block should catch ImportError, "
+            "not broad Exception"
+        )
+        # serve() still references the helper so behaviour is preserved.
+        serve_src = inspect.getsource(init_mod.serve)
+        assert "_load_config_bus_overrides" in serve_src
 
     def test_apcore_mcp_init_narrows_config_bus_catch(self) -> None:
         """APCoreMCP.__init__ Config Bus block should catch ImportError only."""

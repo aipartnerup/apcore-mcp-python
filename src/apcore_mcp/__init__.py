@@ -111,6 +111,132 @@ def __getattr__(name: str) -> object:
 logger = logging.getLogger(__name__)
 
 
+def _load_config_bus_overrides(
+    *,
+    registry: object,
+    strategy: str | None,
+    load_pipeline: bool,
+) -> dict[str, object]:
+    """Load Config Bus overrides for strategy / middleware / ACL / scalar keys.
+
+    [D9-002] Mirrors the TS helper ``loadConfigBusOverrides`` (index.ts:256).
+    Extracted to eliminate a byte-for-byte duplicate block previously inlined
+    in both :func:`serve` and :func:`async_serve`. Behaviour is preserved
+    exactly — both callers consume the returned mapping the same way they
+    consumed local variables previously.
+
+    Args:
+        registry: The apcore registry used by ``build_strategy_from_config``.
+        strategy: Caller-supplied strategy string; a YAML pipeline config in
+            Config Bus overrides this and emits a warning (serve() behaviour).
+        load_pipeline: When True, read ``mcp.pipeline`` and build a strategy
+            from it (serve()-only path). ``async_serve`` historically does
+            not honour ``mcp.pipeline`` — the flag preserves that asymmetry.
+
+    Returns:
+        Mapping with the following keys (all optional / nullable):
+            - "pipeline_strategy": object | None — built strategy when
+              ``load_pipeline`` and ``mcp.pipeline`` is present.
+            - "config_middleware": list[object] — middleware built from
+              ``mcp.middleware`` (empty list if absent).
+            - "config_acl": object | None — ACL built from ``mcp.acl``.
+            - "scalars": dict[str, object] — scalar overrides for the 9
+              keys: transport, host, port, name, log_level, validate_inputs,
+              explorer, explorer_prefix, require_auth. Keys are present only
+              when Config Bus actually provided a usable value.
+    """
+    pipeline_strategy: object | None = None
+    config_middleware: list[object] = []
+    config_acl: object | None = None
+    scalars: dict[str, object] = {}
+    _config_bus_loaded = False
+    try:
+        from apcore import Config, build_strategy_from_config
+
+        _config_bus_loaded = True
+    except ImportError as exc:
+        logger.debug("Config Bus not available, skipping: %s", exc)
+        return {
+            "pipeline_strategy": None,
+            "config_middleware": config_middleware,
+            "config_acl": None,
+            "scalars": scalars,
+        }
+    config = Config.load() if Config is not None else None  # type: ignore[possibly-undefined]
+    if not config:
+        return {
+            "pipeline_strategy": None,
+            "config_middleware": config_middleware,
+            "config_acl": None,
+            "scalars": scalars,
+        }
+
+    if load_pipeline:
+        pipeline_config = config.get("mcp.pipeline")
+        if pipeline_config and isinstance(pipeline_config, dict) and build_strategy_from_config is not None:
+            pipeline_strategy = build_strategy_from_config(pipeline_config, registry=registry)
+            if strategy:
+                logger.warning("YAML pipeline config overrides strategy parameter")
+
+    # Load declarative middleware from Config Bus (`mcp.middleware`).
+    mw_config = config.get("mcp.middleware")
+    if mw_config and isinstance(mw_config, list):
+        from apcore_mcp.middleware_builder import build_middleware_from_config
+
+        config_middleware = build_middleware_from_config(mw_config)
+
+    # Load declarative ACL from Config Bus (`mcp.acl`).
+    acl_config = config.get("mcp.acl")
+    if acl_config:
+        from apcore_mcp.acl_builder import build_acl_from_config
+
+        config_acl = build_acl_from_config(acl_config)
+
+    # Wire MCP_DEFAULTS declared keys as Config Bus fallbacks. See serve()
+    # docstring above for the precedence rationale (Config Bus overrides
+    # function-signature defaults, but explicit caller kwargs always win).
+    cfg_transport = config.get("mcp.transport")
+    if cfg_transport and isinstance(cfg_transport, str):
+        scalars["transport"] = cfg_transport
+    cfg_host = config.get("mcp.host")
+    if cfg_host and isinstance(cfg_host, str):
+        scalars["host"] = cfg_host
+    cfg_port = config.get("mcp.port")
+    if cfg_port is not None:
+        try:
+            scalars["port"] = int(cfg_port)
+        except (ValueError, TypeError):
+            logger.warning(
+                "mcp.port Config Bus value %r is not an integer; ignoring",
+                cfg_port,
+            )
+    cfg_name = config.get("mcp.name")
+    if cfg_name and isinstance(cfg_name, str):
+        scalars["name"] = cfg_name
+    cfg_log_level = config.get("mcp.log_level")
+    if cfg_log_level and isinstance(cfg_log_level, str):
+        scalars["log_level"] = cfg_log_level
+    cfg_validate = config.get("mcp.validate_inputs")
+    if cfg_validate is not None and isinstance(cfg_validate, bool):
+        scalars["validate_inputs"] = cfg_validate
+    cfg_explorer = config.get("mcp.explorer")
+    if cfg_explorer is not None and isinstance(cfg_explorer, bool):
+        scalars["explorer"] = cfg_explorer
+    cfg_explorer_prefix = config.get("mcp.explorer_prefix")
+    if cfg_explorer_prefix and isinstance(cfg_explorer_prefix, str):
+        scalars["explorer_prefix"] = cfg_explorer_prefix
+    cfg_require_auth = config.get("mcp.require_auth")
+    if cfg_require_auth is not None and isinstance(cfg_require_auth, bool):
+        scalars["require_auth"] = cfg_require_auth
+
+    return {
+        "pipeline_strategy": pipeline_strategy,
+        "config_middleware": config_middleware,
+        "config_acl": config_acl,
+        "scalars": scalars,
+    }
+
+
 def serve(
     registry_or_executor: object,
     *,
@@ -225,82 +351,39 @@ def serve(
 
     registry = resolve_registry(registry_or_executor)
 
-    # Check Config Bus for YAML pipeline / middleware / ACL configuration.
-    # Only catch ImportError — apcore may not be installed or may be an older version.
-    # Builder ValueErrors (malformed YAML) must propagate so misconfiguration fails
-    # loudly at startup, as the builders' docstrings promise.
-    pipeline_strategy = None
-    config_middleware: list[object] = []
-    config_acl: object | None = None
-    _config_bus_loaded = False
-    try:
-        from apcore import Config, build_strategy_from_config
-
-        _config_bus_loaded = True
-    except ImportError as exc:
-        logger.debug("Config Bus not available, skipping: %s", exc)
-    if _config_bus_loaded:
-        config = Config.load() if Config is not None else None  # type: ignore[possibly-undefined]
-        if config:
-            pipeline_config = config.get("mcp.pipeline")
-            if pipeline_config and isinstance(pipeline_config, dict) and build_strategy_from_config is not None:
-                pipeline_strategy = build_strategy_from_config(pipeline_config, registry=registry)
-                if strategy:
-                    logger.warning("YAML pipeline config overrides strategy parameter")
-            # Load declarative middleware from Config Bus (`mcp.middleware`).
-            mw_config = config.get("mcp.middleware")
-            if mw_config and isinstance(mw_config, list):
-                from apcore_mcp.middleware_builder import build_middleware_from_config
-
-                config_middleware = build_middleware_from_config(mw_config)
-            # Load declarative ACL from Config Bus (`mcp.acl`).
-            acl_config = config.get("mcp.acl")
-            if acl_config:
-                from apcore_mcp.acl_builder import build_acl_from_config
-
-                config_acl = build_acl_from_config(acl_config)
-
-            # Wire MCP_DEFAULTS declared keys as Config Bus fallbacks.
-            # Config Bus values act as a layer between the function signature defaults
-            # and the caller's explicit kwargs. Since Python cannot distinguish "caller
-            # passed the default value" from "caller passed nothing", Config Bus values
-            # unconditionally override the function defaults — callers who need a
-            # specific value must pass it explicitly, which also overrides any Config Bus
-            # setting at the next layer of configuration.
-            cfg_transport = config.get("mcp.transport")
-            if cfg_transport and isinstance(cfg_transport, str):
-                transport = cfg_transport  # noqa: F841 — re-bound intentionally
-            cfg_host = config.get("mcp.host")
-            if cfg_host and isinstance(cfg_host, str):
-                host = cfg_host
-            cfg_port = config.get("mcp.port")
-            if cfg_port is not None:
-                try:
-                    port = int(cfg_port)
-                except (ValueError, TypeError):
-                    logger.warning(
-                        "mcp.port Config Bus value %r is not an integer, using default %d",
-                        cfg_port,
-                        port,
-                    )
-            cfg_name = config.get("mcp.name")
-            if cfg_name and isinstance(cfg_name, str):
-                name = cfg_name
-            cfg_log_level = config.get("mcp.log_level")
-            if cfg_log_level and isinstance(cfg_log_level, str):
-                log_level = cfg_log_level
-            cfg_validate = config.get("mcp.validate_inputs")
-            if cfg_validate is not None and isinstance(cfg_validate, bool):
-                validate_inputs = cfg_validate
-            cfg_explorer = config.get("mcp.explorer")
-            if cfg_explorer is not None and isinstance(cfg_explorer, bool):
-                explorer = cfg_explorer
-            cfg_explorer_prefix = config.get("mcp.explorer_prefix")
-            if cfg_explorer_prefix and isinstance(cfg_explorer_prefix, str):
-                explorer_prefix = cfg_explorer_prefix
-            cfg_require_auth = config.get("mcp.require_auth")
-            if cfg_require_auth is not None and isinstance(cfg_require_auth, bool):
-                require_auth = cfg_require_auth
+    # [D9-002] Config Bus overrides — extracted helper, mirrors TS
+    # ``loadConfigBusOverrides``. Builders' ValueErrors propagate so
+    # misconfiguration fails loudly at startup.
+    _cfg_overrides = _load_config_bus_overrides(
+        registry=registry,
+        strategy=strategy,
+        load_pipeline=True,
+    )
+    pipeline_strategy = _cfg_overrides["pipeline_strategy"]
+    config_middleware: list[object] = list(_cfg_overrides["config_middleware"])  # type: ignore[arg-type]
+    config_acl: object | None = _cfg_overrides["config_acl"]
+    _scalars: dict[str, object] = _cfg_overrides["scalars"]  # type: ignore[assignment]
+    # Wire MCP_DEFAULTS declared keys as Config Bus fallbacks. Config Bus
+    # values act as a layer between the function-signature defaults and the
+    # caller's explicit kwargs; explicit kwargs always win at runtime.
+    if "transport" in _scalars:
+        transport = _scalars["transport"]  # type: ignore[assignment]
+    if "host" in _scalars:
+        host = _scalars["host"]  # type: ignore[assignment]
+    if "port" in _scalars:
+        port = _scalars["port"]  # type: ignore[assignment]
+    if "name" in _scalars:
+        name = _scalars["name"]  # type: ignore[assignment]
+    if "log_level" in _scalars:
+        log_level = _scalars["log_level"]  # type: ignore[assignment]
+    if "validate_inputs" in _scalars:
+        validate_inputs = _scalars["validate_inputs"]  # type: ignore[assignment]
+    if "explorer" in _scalars:
+        explorer = _scalars["explorer"]  # type: ignore[assignment]
+    if "explorer_prefix" in _scalars:
+        explorer_prefix = _scalars["explorer_prefix"]  # type: ignore[assignment]
+    if "require_auth" in _scalars:
+        require_auth = _scalars["require_auth"]  # type: ignore[assignment]
 
     # Merge Config Bus middleware (applied first) with caller-supplied middleware.
     combined_middleware: list[object] = list(config_middleware)
@@ -580,52 +663,32 @@ async def async_serve(
 
     registry = resolve_registry(registry_or_executor)
 
-    # Load middleware + ACL from Config Bus (mirrors serve() behaviour).
-    # Only catch ImportError; builder ValueErrors propagate to fail loudly on bad config.
-    config_middleware: list[object] = []
-    config_acl: object | None = None
-    _async_config_bus_loaded = False
-    try:
-        from apcore import Config as _AsyncConfig
-
-        _async_config_bus_loaded = True
-    except ImportError as exc:
-        logger.debug("Config Bus not available, skipping: %s", exc)
-    if _async_config_bus_loaded:
-        _cfg = _AsyncConfig.load() if _AsyncConfig is not None else None  # type: ignore[possibly-undefined]
-        if _cfg:
-            _mw_cfg = _cfg.get("mcp.middleware")
-            if _mw_cfg and isinstance(_mw_cfg, list):
-                from apcore_mcp.middleware_builder import build_middleware_from_config as _build_mw
-
-                config_middleware = _build_mw(_mw_cfg)
-            _acl_cfg = _cfg.get("mcp.acl")
-            if _acl_cfg:
-                from apcore_mcp.acl_builder import build_acl_from_config as _build_acl
-
-                config_acl = _build_acl(_acl_cfg)
-
-            # Re-bind transport-config keys from Config Bus — mirrors serve() behaviour.
-            # These keys are silently ignored when coming from environment variables if we
-            # don't re-bind here, because Config Bus returns strings for env-var values.
-            _cfg_name = _cfg.get("mcp.name")
-            if _cfg_name and isinstance(_cfg_name, str):
-                name = _cfg_name
-            _cfg_log_level = _cfg.get("mcp.log_level")
-            if _cfg_log_level and isinstance(_cfg_log_level, str):
-                log_level = _cfg_log_level
-            _cfg_validate = _cfg.get("mcp.validate_inputs")
-            if _cfg_validate is not None and isinstance(_cfg_validate, bool):
-                validate_inputs = _cfg_validate
-            _cfg_explorer = _cfg.get("mcp.explorer")
-            if _cfg_explorer is not None and isinstance(_cfg_explorer, bool):
-                explorer = _cfg_explorer
-            _cfg_explorer_prefix = _cfg.get("mcp.explorer_prefix")
-            if _cfg_explorer_prefix and isinstance(_cfg_explorer_prefix, str):
-                explorer_prefix = _cfg_explorer_prefix
-            _cfg_require_auth = _cfg.get("mcp.require_auth")
-            if _cfg_require_auth is not None and isinstance(_cfg_require_auth, bool):
-                require_auth = _cfg_require_auth
+    # [D9-002] Config Bus overrides — extracted helper. async_serve()
+    # historically did not honour ``mcp.pipeline`` / ``mcp.transport`` /
+    # ``mcp.host`` / ``mcp.port`` (the ASGI app has no transport choice and
+    # is mounted by the caller), so the helper is invoked with
+    # ``load_pipeline=False`` and the transport/host/port scalars are
+    # ignored below.
+    _cfg_overrides = _load_config_bus_overrides(
+        registry=registry,
+        strategy=strategy,
+        load_pipeline=False,
+    )
+    config_middleware: list[object] = list(_cfg_overrides["config_middleware"])  # type: ignore[arg-type]
+    config_acl: object | None = _cfg_overrides["config_acl"]
+    _scalars: dict[str, object] = _cfg_overrides["scalars"]  # type: ignore[assignment]
+    if "name" in _scalars:
+        name = _scalars["name"]  # type: ignore[assignment]
+    if "log_level" in _scalars:
+        log_level = _scalars["log_level"]  # type: ignore[assignment]
+    if "validate_inputs" in _scalars:
+        validate_inputs = _scalars["validate_inputs"]  # type: ignore[assignment]
+    if "explorer" in _scalars:
+        explorer = _scalars["explorer"]  # type: ignore[assignment]
+    if "explorer_prefix" in _scalars:
+        explorer_prefix = _scalars["explorer_prefix"]  # type: ignore[assignment]
+    if "require_auth" in _scalars:
+        require_auth = _scalars["require_auth"]  # type: ignore[assignment]
 
     combined_middleware: list[object] = list(config_middleware)
     if middleware:
