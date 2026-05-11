@@ -8,7 +8,7 @@ the two callers.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -60,7 +60,7 @@ class TestLoadConfigBusOverridesScalars:
                 load_pipeline=False,
             )
 
-        scalars = result["scalars"]
+        scalars = cast(dict[str, Any], result["scalars"])
         assert scalars["transport"] == "streamable-http"
         assert scalars["host"] == "0.0.0.0"
         assert scalars["port"] == 9000
@@ -81,7 +81,7 @@ class TestLoadConfigBusOverridesScalars:
                 strategy=None,
                 load_pipeline=False,
             )
-        assert result["scalars"]["port"] == 8080
+        assert cast(dict[str, Any], result["scalars"])["port"] == 8080
 
     def test_port_garbage_string_is_ignored(self, fake_registry: _FakeRegistry) -> None:
         fake_cfg = _FakeConfig({"mcp.port": "not-a-number"})
@@ -92,7 +92,7 @@ class TestLoadConfigBusOverridesScalars:
                 strategy=None,
                 load_pipeline=False,
             )
-        assert "port" not in result["scalars"]
+        assert "port" not in cast(dict[str, Any], result["scalars"])
 
     def test_empty_config_returns_empty_scalars(self, fake_registry: _FakeRegistry) -> None:
         fake_cfg = _FakeConfig({})

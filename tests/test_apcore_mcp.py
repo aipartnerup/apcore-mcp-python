@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -393,7 +394,7 @@ class TestAPCoreMCPAsyncServe:
             import contextlib
 
             @contextlib.asynccontextmanager
-            async def fake_build(*a: Any, **kw: Any) -> Any:
+            async def fake_build(*a: Any, **kw: Any) -> AsyncIterator[Any]:
                 yield mock_app
 
             mock_tm.build_streamable_http_app = fake_build
@@ -468,7 +469,7 @@ class TestPyC2OutputFormatterPropagation:
             mock_tm = mt.return_value
 
             @contextlib.asynccontextmanager
-            async def fake_build_app(*a: Any, **kw: Any) -> Any:
+            async def fake_build_app(*a: Any, **kw: Any) -> AsyncIterator[Any]:
                 yield mock_app
 
             mock_tm.build_streamable_http_app = fake_build_app

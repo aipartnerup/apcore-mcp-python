@@ -309,7 +309,9 @@ class TestErrorMapper:
             code="MODULE_EXECUTE_ERROR",
             message="Transient failure",
         )
-        error.retryable = True
+        # ModuleError doesn't statically declare AI guidance attrs; apcore sets them
+        # dynamically at runtime. setattr() signals the dynamic intent to type-checkers.
+        setattr(error, "retryable", True)
         result = mapper.to_mcp_error(error)
 
         assert result["retryable"] is True
@@ -320,7 +322,7 @@ class TestErrorMapper:
             code="MODULE_EXECUTE_ERROR",
             message="Bad input",
         )
-        error.ai_guidance = "Try providing the field in ISO-8601 format"
+        setattr(error, "ai_guidance", "Try providing the field in ISO-8601 format")
         result = mapper.to_mcp_error(error)
 
         assert result["aiGuidance"] == "Try providing the field in ISO-8601 format"
@@ -331,8 +333,8 @@ class TestErrorMapper:
             code="GENERAL_INVALID_INPUT",
             message="Missing required field",
         )
-        error.user_fixable = True
-        error.suggestion = "Add the 'name' field to your input"
+        setattr(error, "user_fixable", True)
+        setattr(error, "suggestion", "Add the 'name' field to your input")
         result = mapper.to_mcp_error(error)
 
         assert result["userFixable"] is True
@@ -405,7 +407,7 @@ class TestEM3UserFixableHardcoding:
         err = ModuleError(code="VERSION_CONSTRAINT_INVALID", message="x")
         # Bridge stamps True; subsequent _attach_ai_guidance must not overwrite it.
         # Conversely if upstream sets False explicitly, that wins.
-        err.user_fixable = False
+        setattr(err, "user_fixable", False)
         result = mapper.to_mcp_error(err)
         # Stamped True first; _attach_ai_guidance preserves the existing key.
         # This is intentional: bridge default reflects the docs-level guarantee.
@@ -653,7 +655,7 @@ class TestPyW2TaskLimitExceededDeadBranch:
 
         from apcore.errors import TaskLimitExceededError
 
-        err = TaskLimitExceededError("Too many tasks")
+        err = TaskLimitExceededError(max_tasks=10)
 
         with patch.object(mapper, "_handle_apcore_error", wraps=mapper._handle_apcore_error) as mock_handle:
             result = mapper.to_mcp_error(err)
@@ -667,7 +669,7 @@ class TestPyW2TaskLimitExceededDeadBranch:
         """TaskLimitExceededError result contains isError, errorType, retryable."""
         from apcore.errors import TaskLimitExceededError
 
-        err = TaskLimitExceededError("Too many concurrent tasks")
+        err = TaskLimitExceededError(max_tasks=10)
         result = mapper.to_mcp_error(err)
 
         assert result["isError"] is True

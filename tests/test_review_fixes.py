@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -734,7 +735,7 @@ class TestPyW1AsyncServeConfigBusParity:
             mock_tm = mock_tm_cls.return_value
 
             @contextlib.asynccontextmanager
-            async def fake_build(*a: Any, **kw: Any) -> Any:
+            async def fake_build(*a: Any, **kw: Any) -> AsyncIterator[Any]:
                 yield mock_app
 
             mock_tm.build_streamable_http_app = fake_build
