@@ -1,5 +1,9 @@
 """apcore-mcp: Automatic MCP Server & OpenAI Tools Bridge for apcore."""
 
+# TODO(D9-001): Refactor serve()/async_serve()/to_openai_tools() to delegate to APCoreMCP.
+# The current top-level functions duplicate the entire pipeline already built by APCoreMCP.
+# See audit-report findings D9-001. Estimated reduction: 400-500 LOC.
+
 from __future__ import annotations
 
 import asyncio
