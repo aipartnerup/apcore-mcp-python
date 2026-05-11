@@ -491,6 +491,150 @@ class TestEM3UserFixableHardcoding:
         assert "db-3" not in result["message"]
 
 
+class TestD10003CircuitBreakerOpenAiGuidanceFallback:
+    """[D10-003] CIRCUIT_BREAKER_OPEN must surface a canonical aiGuidance hint
+    even when the apcore error does not populate ``ai_guidance``. Mirrors the
+    TS+Rust fallback string so cross-language envelopes stay byte-identical
+    when the per-module hint is missing.
+    """
+
+    @pytest.fixture
+    def mapper(self) -> ErrorMapper:
+        return ErrorMapper()
+
+    _CANONICAL_HINT = (
+        "Module's circuit breaker is OPEN — repeated failures have tripped the breaker. "
+        "Wait until the recovery window elapses, then retry; the breaker will move to "
+        "HALF_OPEN and accept a trial call."
+    )
+
+    def test_to_mcp_error_circuit_breaker_open_missing_ai_guidance_falls_back_to_canonical_hint(
+        self, mapper: ErrorMapper
+    ) -> None:
+        from apcore.errors import CircuitBreakerOpenError
+
+        err = CircuitBreakerOpenError(module_id="m")
+        err.ai_guidance = None  # simulate absent per-module hint
+
+        result = mapper.to_mcp_error(err)
+
+        assert result["errorType"] == "CIRCUIT_BREAKER_OPEN"
+        assert result["retryable"] is True
+        assert result["aiGuidance"] == self._CANONICAL_HINT
+
+    def test_to_mcp_error_circuit_breaker_open_preserves_per_module_hint(
+        self, mapper: ErrorMapper
+    ) -> None:
+        """When apcore sets ``ai_guidance``, the per-module value wins."""
+        from apcore.errors import CircuitBreakerOpenError
+
+        err = CircuitBreakerOpenError(module_id="m")
+        # CircuitBreakerOpenError populates ai_guidance by default
+        assert err.ai_guidance  # sanity check
+        per_module = err.ai_guidance
+
+        result = mapper.to_mcp_error(err)
+
+        assert result["aiGuidance"] == per_module
+        assert result["aiGuidance"] != self._CANONICAL_HINT
+
+
+class TestD10004DependencyErrorsAttachAiGuidance:
+    """[D10-004] DEPENDENCY_NOT_FOUND / DEPENDENCY_VERSION_MISMATCH must flow
+    through ``_attach_ai_guidance`` so any apcore-side ``ai_guidance`` /
+    ``suggestion`` / ``retryable`` attributes appear on the MCP envelope.
+    """
+
+    @pytest.fixture
+    def mapper(self) -> ErrorMapper:
+        return ErrorMapper()
+
+    def test_dependency_not_found_attaches_ai_guidance_fields(
+        self, mapper: ErrorMapper
+    ) -> None:
+        from apcore.errors import DependencyNotFoundError
+
+        err = DependencyNotFoundError(module_id="m", dependency_id="d")
+        err.ai_guidance = "Register dependency 'd' before invoking 'm'."
+        err.suggestion = "Add 'd' to the registry."
+        err.retryable = False
+
+        result = mapper.to_mcp_error(err)
+
+        assert result["errorType"] == "DEPENDENCY_NOT_FOUND"
+        assert result["userFixable"] is True
+        assert result["aiGuidance"] == "Register dependency 'd' before invoking 'm'."
+        assert result["suggestion"] == "Add 'd' to the registry."
+        assert result["retryable"] is False
+
+    def test_dependency_version_mismatch_attaches_ai_guidance_fields(
+        self, mapper: ErrorMapper
+    ) -> None:
+        from apcore.errors import DependencyVersionMismatchError
+
+        err = DependencyVersionMismatchError(
+            module_id="m", dependency_id="d", required="1.0", actual="0.9"
+        )
+        err.ai_guidance = "Upgrade 'd' to >=1.0."
+        err.suggestion = "Pin 'd' at 1.0 or newer."
+        err.retryable = False
+
+        result = mapper.to_mcp_error(err)
+
+        assert result["errorType"] == "DEPENDENCY_VERSION_MISMATCH"
+        assert result["userFixable"] is True
+        assert result["aiGuidance"] == "Upgrade 'd' to >=1.0."
+        assert result["suggestion"] == "Pin 'd' at 1.0 or newer."
+        assert result["retryable"] is False
+
+
+class TestD9003ToMcpErrorAnyDelegatesToModuleError:
+    """[D9-003] ``to_mcp_error_any`` must downcast known apcore module-error
+    types and delegate to ``to_mcp_error`` (mirrors Rust pattern). Only true
+    foreign exceptions fall through to the GENERAL_INTERNAL_ERROR envelope.
+    """
+
+    @pytest.fixture
+    def mapper(self) -> ErrorMapper:
+        return ErrorMapper()
+
+    def test_to_mcp_error_any_forwards_module_error_to_typed_path(
+        self, mapper: ErrorMapper
+    ) -> None:
+        from apcore.errors import ModuleError as ApcoreModuleError
+
+        err = ApcoreModuleError(code="GENERAL_INVALID_INPUT", message="bad shape")
+        err.ai_guidance = "Provide 'name' as a string"
+
+        result = mapper.to_mcp_error_any(err)
+
+        assert result["isError"] is True
+        assert result["errorType"] == "GENERAL_INVALID_INPUT"
+        assert result["message"] == "bad shape"
+        assert result["aiGuidance"] == "Provide 'name' as a string"
+
+    def test_to_mcp_error_any_forwards_module_error_subclass(
+        self, mapper: ErrorMapper
+    ) -> None:
+        from apcore.errors import DependencyNotFoundError
+
+        err = DependencyNotFoundError(module_id="m", dependency_id="d")
+        result = mapper.to_mcp_error_any(err)
+
+        assert result["errorType"] == "DEPENDENCY_NOT_FOUND"
+        assert result["userFixable"] is True
+
+    def test_to_mcp_error_any_falls_back_for_plain_runtime_error(
+        self, mapper: ErrorMapper
+    ) -> None:
+        from apcore_mcp.adapters.errors import internal_error_response
+
+        # Non-ModuleError input must still produce the sanitized envelope to
+        # avoid leaking server-side state (security: EM-6).
+        assert mapper.to_mcp_error_any(RuntimeError("api-key-leak")) == internal_error_response()
+        assert mapper.to_mcp_error_any(ValueError("secret")) == internal_error_response()
+
+
 class TestPyW2TaskLimitExceededDeadBranch:
     """[Py-W2] Dead TASK_LIMIT_EXCEEDED branch in _handle_apcore_error must be removed.
 

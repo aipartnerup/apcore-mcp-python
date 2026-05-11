@@ -115,23 +115,40 @@ class ErrorMapper:
                 "retryable": True,
             }
             self._attach_ai_guidance(error, result)
+            # [D10-003] Mirror TS+Rust: when apcore did not populate a
+            # per-module ai_guidance, fall back to the canonical recovery
+            # hint so cross-language envelopes stay byte-identical.
+            result.setdefault(
+                "aiGuidance",
+                "Module's circuit breaker is OPEN — repeated failures have tripped "
+                "the breaker. Wait until the recovery window elapses, then retry; "
+                "the breaker will move to HALF_OPEN and accept a trial call.",
+            )
             return result
         if isinstance(error, DependencyNotFoundError):
-            return {
+            # [D10-004] Build the envelope and run _attach_ai_guidance so any
+            # ai_guidance / suggestion / retryable attributes set on the apcore
+            # error flow through to the MCP envelope (mirrors TS+Rust).
+            result = {
                 "isError": True,
                 "errorType": ERROR_CODES["DEPENDENCY_NOT_FOUND"],
                 "message": getattr(error, "message", str(error)),
                 "details": getattr(error, "details", None),
                 "userFixable": True,
             }
+            self._attach_ai_guidance(error, result)
+            return result
         if isinstance(error, DependencyVersionMismatchError):
-            return {
+            # [D10-004] See DependencyNotFoundError above.
+            result = {
                 "isError": True,
                 "errorType": ERROR_CODES["DEPENDENCY_VERSION_MISMATCH"],
                 "message": getattr(error, "message", str(error)),
                 "details": getattr(error, "details", None),
                 "userFixable": True,
             }
+            self._attach_ai_guidance(error, result)
+            return result
 
         # Check if it's an apcore ModuleError by isinstance (fast path for
         # known hierarchy) or structural duck-typing (fallback for compatibility).
@@ -148,11 +165,20 @@ class ErrorMapper:
     def to_mcp_error_any(self, error: Any) -> dict[str, Any]:
         """Generic-error fallback for arbitrary inputs.
 
-        Returns the canonical GENERAL_INTERNAL_ERROR envelope unchanged. The
-        original error's class name, message, traceback, and details are
-        deliberately ignored (security: avoid leaking server-side state).
+        [D9-003] Mirrors Rust's downcast pattern: when ``error`` is an apcore
+        ``ModuleError`` (or one of the typed subclasses handled by
+        ``to_mcp_error``), delegate to the typed path so the caller still
+        gets ``aiGuidance`` / ``userFixable`` / ``retryable`` enrichment.
+        Only true foreign exceptions fall through to the canonical
+        ``GENERAL_INTERNAL_ERROR`` envelope — the original class name,
+        message, traceback, and details are deliberately discarded to avoid
+        leaking server-side state.
         """
-        del error
+        # Forward known apcore error types (incl. ExecutionCancelledError,
+        # TaskLimitExceededError, CircuitBreakerOpenError, DependencyNotFoundError,
+        # DependencyVersionMismatchError, and every ModuleError subclass).
+        if isinstance(error, (ModuleError, ExecutionCancelledError)):
+            return self.to_mcp_error(error)
         return internal_error_response()
 
     # Map apcore ModuleError attribute names (snake_case) to MCP wire format (camelCase).
