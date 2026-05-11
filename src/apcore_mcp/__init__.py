@@ -24,6 +24,13 @@ from apcore_mcp.config import MCP_DEFAULTS, MCP_ENV_PREFIX, MCP_NAMESPACE, regis
 from apcore_mcp.constants import APCORE_EVENTS, ERROR_CODES, MODULE_ID_PATTERN, REGISTRY_EVENTS
 from apcore_mcp.converters.openai import OpenAIConverter
 from apcore_mcp.helpers import MCP_ELICIT_KEY, MCP_PROGRESS_KEY, ElicitResult, elicit, report_progress
+from apcore_mcp.server.async_task_bridge import (
+    META_TOOL_NAMES,
+    AsyncTaskBridge,
+)
+from apcore_mcp.server.async_task_bridge import (
+    RESERVED_PREFIX as APCORE_META_TOOL_PREFIX,
+)
 from apcore_mcp.server.factory import MCPServerFactory
 from apcore_mcp.server.listener import RegistryListener
 from apcore_mcp.server.router import ExecutionRouter
@@ -52,6 +59,10 @@ __all__ = [
     "ExecutionRouter",
     "RegistryListener",
     "TransportManager",
+    # AsyncTaskBridge (parity with TypeScript ``src/index.ts``)
+    "AsyncTaskBridge",
+    "META_TOOL_NAMES",
+    "APCORE_META_TOOL_PREFIX",
     # Authentication
     "Authenticator",
     "JWTAuthenticator",
