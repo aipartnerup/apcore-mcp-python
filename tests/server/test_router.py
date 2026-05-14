@@ -857,9 +857,9 @@ class TestOutputFormatter:
         assert is_error is False
         assert content[0]["text"] == "Name: Alice, Score: 42"
 
-    async def test_formatter_not_applied_to_non_dict(self) -> None:
-        """Formatter is skipped for non-dict results (e.g. list, string)."""
-        executor = StubExecutor(results={"test.module": [1, 2, 3]})
+    async def test_formatter_not_applied_to_non_dict_or_list(self) -> None:
+        """Formatter is skipped for results that are neither dict nor list."""
+        executor = StubExecutor(results={"test.module": "plain string"})
         called = []
 
         def my_formatter(data: dict) -> str:
@@ -871,7 +871,7 @@ class TestOutputFormatter:
         content, is_error, _ = await router.handle_call("test.module", {})
         assert is_error is False
         assert called == []
-        assert json.loads(content[0]["text"]) == [1, 2, 3]
+        assert json.loads(content[0]["text"]) == "plain string"
 
     async def test_formatter_fallback_on_error(self) -> None:
         """If formatter raises, fall back to json.dumps."""
@@ -1225,9 +1225,7 @@ class TestCancellation:
 
         call_id = "race-call-1"
         # Kick off the bridged submit in the background.
-        task = asyncio.create_task(
-            router.handle_call("heavy.module", {}, extra={"call_id": call_id})
-        )
+        task = asyncio.create_task(router.handle_call("heavy.module", {}, extra={"call_id": call_id}))
         # Wait until submit has started so we know handle_call is mid-dispatch.
         await asyncio.wait_for(submit_started.wait(), timeout=2.0)
 

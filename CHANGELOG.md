@@ -7,18 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.15.0] - 2026-05-09
 
-Leverages **apcore 0.21.0 + apcore-toolkit 0.6.0**. Promotes three new
+Leverages **apcore 0.21.0 + apcore-toolkit 0.7.0**. Promotes three new
 upstream capabilities into MCP-facing surface area: `Module.preview()`
 (PROTOCOL_SPEC §5.6), `CircuitBreakerOpenError` (sync alignment A-001),
 and `apcore_toolkit.format_module(style="markdown")`. Cross-SDK byte-
-equivalent with `apcore-mcp-rust` and `apcore-mcp-typescript` 0.15.0.
+equivalent with `apcore-mcp-typescript` and `apcore-mcp-rust` 0.15.0.
 
 ### Changed
 
-- **Dependency bump**: `apcore >= 0.21.0` (was `>= 0.19.0`); `apcore-toolkit >= 0.6.0` (was `>= 0.5.0`, optional `[markdown]` extra).
+- **Dependency bump**: `apcore >= 0.21.0` (was `>= 0.19.0`); `apcore-toolkit >= 0.7.0` (was `>= 0.5.0`, optional `[markdown]` extra).
 
 ### Added
 
+- **Built-in output format support**: Added `--output-format` (`json`, `csv`, `jsonl`) to CLI and `output_format` parameter to `serve()`. Leverages `apcore-toolkit` 0.7 for standard tabular formatting.
 - **`__apcore_module_preview` meta-tool** (apcore 0.21 PROTOCOL_SPEC §5.6 / §12.8) — fifth reserved meta-tool alongside the four `__apcore_task_*` ones. Drives `executor.validate(module_id, inputs, context)` and returns a structured `{valid, requires_approval, predicted_changes, checks}` envelope WITHOUT executing the module. Lets AI orchestrators answer "what would change in the world if I called this?" before invoking destructive or stateful modules. `arguments: null` is preserved verbatim — the calling business decides whether null is a valid input. Structurally-impossible shapes (arrays, scalars) return a typed validation error.
 - **`AsyncTaskBridge(executor=...)` constructor kwarg** — explicit Executor reference for the preview meta-tool. When omitted, falls back to the manager's bound executor. The `with_limits` factory wires this automatically.
 - **`MCPServerFactory(rich_description=True)`** and **`OpenAIConverter.convert_descriptor(rich_description=True)` / `convert_registry(rich_description=True)`** — render `Tool.description` / OpenAI `function.description` as canonical apcore-toolkit Markdown (`format_module(style="markdown")`) instead of the plain one-line description. Includes title, description, parameters list, returns list, behavior table (only fields differing from defaults — toolkit 0.6 alignment), tags, and examples. LLMs select tools primarily from this string; Markdown packs more decision-relevant signal per token. Display-overlay `mcp.description` overrides still win first. One-shot WARN log when `apcore-toolkit` is not installed (recommend `pip install 'apcore-mcp[markdown]'`).

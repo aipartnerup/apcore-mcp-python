@@ -63,6 +63,7 @@ class TestServeAndClassMethodDelegateSameCodePath:
         mcp._prefix = None
         mcp._validate_inputs = False
         mcp._output_formatter = None
+        mcp._output_format = None
         mcp._metrics_collector = None
         mcp._authenticator = None
         mcp._require_auth = True
@@ -102,6 +103,7 @@ class TestServeAndClassMethodDelegateSameCodePath:
         mcp._prefix = None
         mcp._validate_inputs = False
         mcp._output_formatter = None
+        mcp._output_format = None
         mcp._metrics_collector = None
         mcp._authenticator = None
         mcp._require_auth = True

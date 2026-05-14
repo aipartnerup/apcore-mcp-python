@@ -212,6 +212,10 @@ class SchemaConverter:
         Raises:
             ValueError: If the $ref path is invalid or not found
         """
+        # Note: the TypeScript apcore-toolkit guards against ``__proto__`` /
+        # ``constructor`` / ``prototype`` JSON-pointer segments to block JS
+        # prototype pollution; Python's plain ``dict`` lookup has no such
+        # semantics, so no equivalent defensive guard is needed here.
         # Parse the $ref path
         # Expected format: "#/$defs/DefinitionName"
         if not ref_path.startswith("#/$defs/"):

@@ -67,6 +67,8 @@ class ExecutionRouter:
         output_formatter: Optional callable ``(dict) -> str`` that formats
             execution results into text for LLM consumption.  When None,
             results are serialised with ``json.dumps(result, default=str)``.
+        output_format: Optional built-in format name ("json", "csv", "jsonl").
+            Takes precedence over output_formatter if both are set.
     """
 
     def __init__(
@@ -75,6 +77,7 @@ class ExecutionRouter:
         *,
         validate_inputs: bool = False,
         output_formatter: Callable[[dict[str, Any]], str] | None = None,
+        output_format: str | None = None,
         redact_output: bool = True,
         output_schema_map: dict[str, dict] | None = None,
         trace: bool = False,
@@ -85,9 +88,15 @@ class ExecutionRouter:
         self._error_mapper = ErrorMapper()
         self._validate_inputs = validate_inputs
         self._output_formatter = output_formatter
+        self._output_format = output_format
         self._redact_output = redact_output
         self._output_schema_map = output_schema_map or {}
         self._trace = trace
+
+        # Resolve built-in formatter if output_format is specified
+        if output_format and output_format != "json":
+            self._output_formatter = self._resolve_builtin_formatter(output_format)
+
         # F-043 AsyncTaskBridge integration. The canonical production path
         # also dispatches at the factory's `register_handlers` callsite
         # (server/factory.py), but the router holds the bridge too as
@@ -116,6 +125,40 @@ class ExecutionRouter:
         self._call_async_accepts_context = self._check_accepts_context(executor.call_async)
         self._stream_accepts_context = self._check_accepts_context(getattr(executor, "stream", None))
 
+    def _resolve_builtin_formatter(self, format_name: str) -> Callable[[Any], str]:
+        """Resolve a built-in formatter name to a callable.
+
+        Supports "csv" and "jsonl" via apcore-toolkit.
+        """
+
+        def _builtin_formatter(result: Any) -> str:
+            # Tabular formatters expect an iterable of mappings.
+            # If result is a single dict, wrap it in a list.
+            rows = result if isinstance(result, list) else [result]
+            if not all(isinstance(r, dict) for r in rows):
+                logger.warning(
+                    "output_format=%s requested but result is not tabular; falling back to JSON", format_name
+                )
+                return json.dumps(result, default=str)
+
+            try:
+                from apcore_toolkit import format_csv, format_jsonl
+
+                if format_name == "csv":
+                    return format_csv(rows)
+                if format_name == "jsonl":
+                    return format_jsonl(rows)
+            except ImportError:
+                logger.warning("apcore-toolkit not installed; cannot use output_format=%s", format_name)
+                return json.dumps(result, default=str)
+            except Exception:
+                logger.warning("Built-in formatter %s failed", format_name, exc_info=True)
+                return json.dumps(result, default=str)
+
+            return json.dumps(result, default=str)
+
+        return _builtin_formatter
+
     def _maybe_redact(self, tool_name: str, result: Any) -> Any:
         """Apply output redaction if enabled and an output_schema exists for the tool.
 
@@ -141,10 +184,10 @@ class ExecutionRouter:
         Uses the configured output_formatter if set, otherwise falls back
         to ``json.dumps(result, default=str)``.
 
-        The formatter is only applied to dict results. Non-dict results
-        (str, list, etc.) are always serialised with json.dumps.
+        The formatter is applied to dict or list results when a formatter
+        is configured.
         """
-        if self._output_formatter is not None and isinstance(result, dict):
+        if self._output_formatter is not None and isinstance(result, dict | list):
             try:
                 return self._output_formatter(result)
             except Exception:

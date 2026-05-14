@@ -47,7 +47,7 @@ pip install apcore-mcp
 
 That's it. Your existing project requires no changes.
 
-Requires Python 3.11+ and `apcore >= 0.21.0`. For Markdown-rendered tool descriptions install `pip install 'apcore-mcp[markdown]'` (pulls in `apcore-toolkit >= 0.6.0`).
+Requires Python 3.11+ and `apcore >= 0.21.0`. For Markdown-rendered tool descriptions install `pip install 'apcore-mcp[markdown]'` (pulls in `apcore-toolkit >= 0.7.0`).
 
 ## Quick Start
 
@@ -245,6 +245,7 @@ apcore-mcp --extensions-dir PATH [OPTIONS]
 | `--jwt-require-auth` | on | Require valid token; use `--no-jwt-require-auth` for permissive mode |
 | `--exempt-paths` | — | Comma-separated paths exempt from auth (e.g. `/health,/metrics`) |
 | `--approval` | `off` | Approval handler: `elicit`, `auto-approve`, `always-deny`, or `off` |
+| `--output-format` | `json` | Built-in output format: `json`, `csv`, or `jsonl` |
 
 JWT key resolution priority: `--jwt-key-file` > `--jwt-secret` > `APCORE_JWT_SECRET` environment variable.
 
@@ -452,18 +453,22 @@ apcore-mcp --extensions-dir ./extensions --approval elicit
 
 ### Output Formatting
 
-By default, tool execution results are serialized as JSON (`json.dumps`). You can customize this by passing an `output_formatter` callable that converts a `dict` result into a string.
+By default, tool execution results are serialized as JSON (`json.dumps`). You can customize this by passing an `output_format` name or a custom `output_formatter` callable.
 
-For Markdown output, use `to_markdown` from [apcore-toolkit](https://github.com/aiperceivable/apcore-toolkit-python):
+**Built-in formats** (requires `apcore-toolkit` 0.7+):
 
 ```python
-from apcore_toolkit import to_markdown
-from apcore_mcp import APCoreMCP
+# Via CLI
+# apcore-mcp --extensions-dir ./extensions --output-format csv
 
-mcp = APCoreMCP("./extensions", output_formatter=to_markdown)
+# Via API
+mcp = APCoreMCP("./extensions", output_format="csv")
 ```
 
-Or define your own formatter:
+Supports `json`, `csv`, and `jsonl`. Non-tabular data gracefully falls back to JSON.
+
+**Custom formatter**:
+Pass a callable that converts a `dict` or `list` result into a string.
 
 ```python
 def my_formatter(data: dict) -> str:

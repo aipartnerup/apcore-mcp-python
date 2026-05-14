@@ -26,9 +26,9 @@ class TestAsyncTaskBridgeReExports:
 
     def test_meta_tool_names_importable_from_top_level(self) -> None:
         from apcore_mcp import META_TOOL_NAMES
-        from apcore_mcp.server.async_task_bridge import META_TOOL_NAMES as Internal
+        from apcore_mcp.server.async_task_bridge import META_TOOL_NAMES as INTERNAL
 
-        assert META_TOOL_NAMES is Internal
+        assert META_TOOL_NAMES is INTERNAL
         # Sanity: the tuple mirrors the TS list.
         assert "__apcore_task_submit" in META_TOOL_NAMES
         assert "__apcore_module_preview" in META_TOOL_NAMES

@@ -346,6 +346,7 @@ class TestServe:
                 executor,
                 validate_inputs=False,
                 output_formatter=None,
+                output_format=None,
                 redact_output=True,
                 output_schema_map={
                     "image.resize": {"type": "object"},

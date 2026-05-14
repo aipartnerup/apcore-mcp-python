@@ -336,6 +336,7 @@ class TestOutputSchemaMapParity:
             mcp._prefix = None
             mcp._validate_inputs = False
             mcp._output_formatter = None
+            mcp._output_format = None
             mcp._async_tasks = False
             mcp._async_max_concurrent = 10
             mcp._async_max_tasks = 1000
@@ -375,8 +376,7 @@ class TestConfigBusExceptionNarrowing:
         # The helper owns the narrowed except clause post-refactor.
         helper_src = inspect.getsource(init_mod._load_config_bus_overrides)
         assert "except ImportError" in helper_src, (
-            "_load_config_bus_overrides Config Bus block should catch ImportError, "
-            "not broad Exception"
+            "_load_config_bus_overrides Config Bus block should catch ImportError, " "not broad Exception"
         )
         # serve() still references the helper so behaviour is preserved.
         serve_src = inspect.getsource(init_mod.serve)

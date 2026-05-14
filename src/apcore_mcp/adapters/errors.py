@@ -177,7 +177,7 @@ class ErrorMapper:
         # Forward known apcore error types (incl. ExecutionCancelledError,
         # TaskLimitExceededError, CircuitBreakerOpenError, DependencyNotFoundError,
         # DependencyVersionMismatchError, and every ModuleError subclass).
-        if isinstance(error, (ModuleError, ExecutionCancelledError)):
+        if isinstance(error, ModuleError | ExecutionCancelledError):
             return self.to_mcp_error(error)
         return internal_error_response()
 

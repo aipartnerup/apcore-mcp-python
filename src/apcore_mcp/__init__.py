@@ -268,6 +268,7 @@ def serve(
     exempt_paths: set[str] | None = None,
     approval_handler: object | None = None,
     output_formatter: Callable | None = None,
+    output_format: str | None = None,
     strategy: str | None = None,
     redact_output: bool = True,
     trace: bool = False,
@@ -311,6 +312,9 @@ def serve(
             are serialised with ``json.dumps``. Use ``apcore_toolkit.to_markdown``
             for human-readable Markdown output (install with
             ``pip install apcore-mcp[markdown]``).
+        output_format: Optional built-in output format name ("json", "csv",
+            "jsonl"). When set, automatically uses the corresponding
+            formatter from ``apcore-toolkit``.
         strategy: Pipeline execution strategy. Valid values: "standard",
             "internal", "testing", "performance", "minimal". Ignored when
             an Executor is provided directly.
@@ -454,6 +458,7 @@ def serve(
         executor,
         validate_inputs=validate_inputs,
         output_formatter=output_formatter,
+        output_format=output_format,
         redact_output=redact_output,
         output_schema_map=output_schema_map,
         trace=trace,
@@ -588,6 +593,7 @@ async def async_serve(
     exempt_paths: set[str] | None = None,
     approval_handler: object | None = None,
     output_formatter: Callable | None = None,
+    output_format: str | None = None,
     strategy: str | None = None,
     trace: bool = False,
     redact_output: bool = True,
@@ -636,6 +642,7 @@ async def async_serve(
         exempt_paths: Exact paths that bypass authentication.
         approval_handler: Optional approval handler for runtime approval.
         output_formatter: Optional callable ``(dict) -> str`` for formatting results.
+        output_format: Optional built-in output format name ("json", "csv", "jsonl").
         strategy: Pipeline execution strategy ("standard", "internal", "testing", "performance", "minimal").
         trace: Enable PipelineTrace capture via call_async_with_trace().
         redact_output: Apply redact_sensitive() to output before serialization.
@@ -750,6 +757,7 @@ async def async_serve(
         executor,
         validate_inputs=validate_inputs,
         output_formatter=output_formatter,
+        output_format=output_format,
         redact_output=redact_output,
         trace=trace,
         output_schema_map=output_schema_map,

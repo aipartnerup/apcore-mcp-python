@@ -143,6 +143,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Pipeline execution strategy (default: standard).",
     )
 
+    # Output formatting
+    parser.add_argument(
+        "--output-format",
+        choices=("json", "csv", "jsonl"),
+        default="json",
+        help='Built-in output format (default: "json").',
+    )
+
     # Approval options
     parser.add_argument(
         "--approval",
@@ -281,6 +289,7 @@ def main() -> None:
             exempt_paths=exempt_paths_set,
             approval_handler=approval_handler,
             strategy=args.strategy,
+            output_format=args.output_format,
             observability=args.observability,
         )
     except Exception:

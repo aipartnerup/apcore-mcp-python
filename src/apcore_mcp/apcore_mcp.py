@@ -63,6 +63,7 @@ class APCoreMCP:
         exempt_paths: set[str] | None = None,
         approval_handler: object | None = None,
         output_formatter: Callable[[dict], str] | None = None,
+        output_format: str | None = None,
         middleware: list[object] | None = None,
         acl: object | None = None,
         observability: bool = False,
@@ -90,6 +91,9 @@ class APCoreMCP:
                 text for LLM consumption.  Defaults to ``None`` (raw JSON).
                 Use ``apcore_toolkit.to_markdown`` for Markdown output
                 (install with ``pip install apcore-mcp[markdown]``).
+            output_format: Optional built-in output format name ("json", "csv",
+                "jsonl"). When set, automatically uses the corresponding
+                formatter from ``apcore-toolkit``.
             middleware: Optional list of apcore ``Middleware`` instances to
                 install on the Executor via ``executor.use()``. Appended to
                 any middleware declared under Config Bus key
@@ -203,9 +207,10 @@ class APCoreMCP:
         self._async_tasks = async_tasks
         self._async_max_concurrent = async_max_concurrent
         self._async_max_tasks = async_max_tasks
-        self._async_bridge: Any = None
+        self._async_bridge = None
 
         self._output_formatter = output_formatter
+        self._output_format = output_format
 
     @property
     def registry(self) -> Any:
@@ -258,6 +263,7 @@ class APCoreMCP:
             self._executor,
             validate_inputs=self._validate_inputs,
             output_formatter=self._output_formatter,
+            output_format=self._output_format,
             redact_output=True,
             output_schema_map=output_schema_map,
         )
@@ -346,6 +352,7 @@ class APCoreMCP:
         explorer_title: str = "APCore MCP Explorer",
         explorer_project_name: str = "apcore-mcp",
         explorer_project_url: str = "https://github.com/aiperceivable/apcore-mcp-python",
+        output_format: str | None = None,
     ) -> None:
         """Launch the MCP server (blocking).
 
@@ -364,6 +371,7 @@ class APCoreMCP:
             explorer_title: Page title for the explorer UI.
             explorer_project_name: Project name shown in the explorer footer.
             explorer_project_url: Project URL linked in the explorer footer.
+            output_format: Built-in output format name ("json", "csv", "jsonl").
         """
         # Lazy lookup avoids a static import cycle between this module and the
         # parent package. Resolving via the package keeps test patches that
@@ -392,6 +400,7 @@ class APCoreMCP:
             require_auth=self._require_auth,
             exempt_paths=self._exempt_paths,
             output_formatter=self._output_formatter,
+            output_format=output_format or self._output_format,
             async_tasks=self._async_tasks,
             async_max_concurrent=self._async_max_concurrent,
             async_max_tasks=self._async_max_tasks,
@@ -407,6 +416,7 @@ class APCoreMCP:
         explorer_title: str = "APCore MCP Explorer",
         explorer_project_name: str = "apcore-mcp",
         explorer_project_url: str = "https://github.com/aiperceivable/apcore-mcp-python",
+        output_format: str | None = None,
     ) -> AsyncIterator[Starlette]:
         """Build an MCP Starlette ASGI app for embedding into a larger service.
 
@@ -432,6 +442,7 @@ class APCoreMCP:
             explorer_title: Page title for the explorer UI.
             explorer_project_name: Project name shown in the explorer footer.
             explorer_project_url: Project URL linked in the explorer footer.
+            output_format: Built-in output format name ("json", "csv", "jsonl").
 
         Yields:
             A configured Starlette ASGI application with MCP endpoints.
@@ -455,6 +466,7 @@ class APCoreMCP:
             require_auth=self._require_auth,
             exempt_paths=self._exempt_paths,
             output_formatter=self._output_formatter,
+            output_format=output_format or self._output_format,
             async_tasks=self._async_tasks,
             async_max_concurrent=self._async_max_concurrent,
             async_max_tasks=self._async_max_tasks,

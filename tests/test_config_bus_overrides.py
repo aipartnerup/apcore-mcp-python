@@ -136,9 +136,7 @@ class TestLoadConfigBusOverridesPipelineFlag:
 
     def test_pipeline_skipped_when_flag_false(self, fake_registry: _FakeRegistry) -> None:
         fake_cfg = _FakeConfig({"mcp.pipeline": {"name": "standard"}})
-        with patch("apcore.Config") as mock_cfg_cls, patch(
-            "apcore.build_strategy_from_config"
-        ) as mock_build:
+        with patch("apcore.Config") as mock_cfg_cls, patch("apcore.build_strategy_from_config") as mock_build:
             mock_cfg_cls.load.return_value = fake_cfg
             mock_build.return_value = "BUILT"
             result = apcore_mcp._load_config_bus_overrides(
@@ -151,9 +149,7 @@ class TestLoadConfigBusOverridesPipelineFlag:
 
     def test_pipeline_consumed_when_flag_true(self, fake_registry: _FakeRegistry) -> None:
         fake_cfg = _FakeConfig({"mcp.pipeline": {"name": "standard"}})
-        with patch("apcore.Config") as mock_cfg_cls, patch(
-            "apcore.build_strategy_from_config"
-        ) as mock_build:
+        with patch("apcore.Config") as mock_cfg_cls, patch("apcore.build_strategy_from_config") as mock_build:
             mock_cfg_cls.load.return_value = fake_cfg
             mock_build.return_value = "BUILT"
             result = apcore_mcp._load_config_bus_overrides(

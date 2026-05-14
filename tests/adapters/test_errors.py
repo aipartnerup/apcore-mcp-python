@@ -311,7 +311,7 @@ class TestErrorMapper:
         )
         # ModuleError doesn't statically declare AI guidance attrs; apcore sets them
         # dynamically at runtime. setattr() signals the dynamic intent to type-checkers.
-        setattr(error, "retryable", True)
+        error.retryable = True
         result = mapper.to_mcp_error(error)
 
         assert result["retryable"] is True
@@ -322,7 +322,7 @@ class TestErrorMapper:
             code="MODULE_EXECUTE_ERROR",
             message="Bad input",
         )
-        setattr(error, "ai_guidance", "Try providing the field in ISO-8601 format")
+        error.ai_guidance = "Try providing the field in ISO-8601 format"
         result = mapper.to_mcp_error(error)
 
         assert result["aiGuidance"] == "Try providing the field in ISO-8601 format"
@@ -333,8 +333,8 @@ class TestErrorMapper:
             code="GENERAL_INVALID_INPUT",
             message="Missing required field",
         )
-        setattr(error, "user_fixable", True)
-        setattr(error, "suggestion", "Add the 'name' field to your input")
+        error.user_fixable = True
+        error.suggestion = "Add the 'name' field to your input"
         result = mapper.to_mcp_error(error)
 
         assert result["userFixable"] is True
@@ -407,7 +407,7 @@ class TestEM3UserFixableHardcoding:
         err = ModuleError(code="VERSION_CONSTRAINT_INVALID", message="x")
         # Bridge stamps True; subsequent _attach_ai_guidance must not overwrite it.
         # Conversely if upstream sets False explicitly, that wins.
-        setattr(err, "user_fixable", False)
+        err.user_fixable = False
         result = mapper.to_mcp_error(err)
         # Stamped True first; _attach_ai_guidance preserves the existing key.
         # This is intentional: bridge default reflects the docs-level guarantee.
@@ -524,9 +524,7 @@ class TestD10003CircuitBreakerOpenAiGuidanceFallback:
         assert result["retryable"] is True
         assert result["aiGuidance"] == self._CANONICAL_HINT
 
-    def test_to_mcp_error_circuit_breaker_open_preserves_per_module_hint(
-        self, mapper: ErrorMapper
-    ) -> None:
+    def test_to_mcp_error_circuit_breaker_open_preserves_per_module_hint(self, mapper: ErrorMapper) -> None:
         """When apcore sets ``ai_guidance``, the per-module value wins."""
         from apcore.errors import CircuitBreakerOpenError
 
@@ -551,9 +549,7 @@ class TestD10004DependencyErrorsAttachAiGuidance:
     def mapper(self) -> ErrorMapper:
         return ErrorMapper()
 
-    def test_dependency_not_found_attaches_ai_guidance_fields(
-        self, mapper: ErrorMapper
-    ) -> None:
+    def test_dependency_not_found_attaches_ai_guidance_fields(self, mapper: ErrorMapper) -> None:
         from apcore.errors import DependencyNotFoundError
 
         err = DependencyNotFoundError(module_id="m", dependency_id="d")
@@ -569,14 +565,10 @@ class TestD10004DependencyErrorsAttachAiGuidance:
         assert result["suggestion"] == "Add 'd' to the registry."
         assert result["retryable"] is False
 
-    def test_dependency_version_mismatch_attaches_ai_guidance_fields(
-        self, mapper: ErrorMapper
-    ) -> None:
+    def test_dependency_version_mismatch_attaches_ai_guidance_fields(self, mapper: ErrorMapper) -> None:
         from apcore.errors import DependencyVersionMismatchError
 
-        err = DependencyVersionMismatchError(
-            module_id="m", dependency_id="d", required="1.0", actual="0.9"
-        )
+        err = DependencyVersionMismatchError(module_id="m", dependency_id="d", required="1.0", actual="0.9")
         err.ai_guidance = "Upgrade 'd' to >=1.0."
         err.suggestion = "Pin 'd' at 1.0 or newer."
         err.retryable = False
@@ -600,9 +592,7 @@ class TestD9003ToMcpErrorAnyDelegatesToModuleError:
     def mapper(self) -> ErrorMapper:
         return ErrorMapper()
 
-    def test_to_mcp_error_any_forwards_module_error_to_typed_path(
-        self, mapper: ErrorMapper
-    ) -> None:
+    def test_to_mcp_error_any_forwards_module_error_to_typed_path(self, mapper: ErrorMapper) -> None:
         from apcore.errors import ModuleError as ApcoreModuleError
 
         err = ApcoreModuleError(code="GENERAL_INVALID_INPUT", message="bad shape")
@@ -615,9 +605,7 @@ class TestD9003ToMcpErrorAnyDelegatesToModuleError:
         assert result["message"] == "bad shape"
         assert result["aiGuidance"] == "Provide 'name' as a string"
 
-    def test_to_mcp_error_any_forwards_module_error_subclass(
-        self, mapper: ErrorMapper
-    ) -> None:
+    def test_to_mcp_error_any_forwards_module_error_subclass(self, mapper: ErrorMapper) -> None:
         from apcore.errors import DependencyNotFoundError
 
         err = DependencyNotFoundError(module_id="m", dependency_id="d")
@@ -626,9 +614,7 @@ class TestD9003ToMcpErrorAnyDelegatesToModuleError:
         assert result["errorType"] == "DEPENDENCY_NOT_FOUND"
         assert result["userFixable"] is True
 
-    def test_to_mcp_error_any_falls_back_for_plain_runtime_error(
-        self, mapper: ErrorMapper
-    ) -> None:
+    def test_to_mcp_error_any_falls_back_for_plain_runtime_error(self, mapper: ErrorMapper) -> None:
         from apcore_mcp.adapters.errors import internal_error_response
 
         # Non-ModuleError input must still produce the sanitized envelope to
