@@ -47,8 +47,6 @@ pip install apcore-mcp
 
 That's it. Your existing project requires no changes.
 
-Requires Python 3.11+ and `apcore >= 0.21.0`. For Markdown-rendered tool descriptions install `pip install 'apcore-mcp[markdown]'` (pulls in `apcore-toolkit >= 0.7.0`).
-
 ## Quick Start
 
 ### Try it now
@@ -564,7 +562,7 @@ tools = to_openai_tools(executor)
 
 - **Auto-discovery** — all modules in the extensions directory are found and exposed automatically
 - **Display overlay** — `metadata["display"]["mcp"]` controls MCP tool names, descriptions, and guidance per module (§5.13); set via `binding_path` in `fastapi-apcore`
-- **Markdown tool descriptions** (`rich_description=True`, v0.15+) — render `Tool.description` / OpenAI `function.description` as canonical apcore-toolkit Markdown (parameters, returns, behavior table, tags, examples) so LLMs get more decision-relevant signal per token. Requires `pip install 'apcore-mcp[markdown]'`.
+- **Markdown tool descriptions** (`rich_description=True`, v0.15+) — render `Tool.description` / OpenAI `function.description` as canonical apcore-toolkit Markdown (parameters, returns, behavior table, tags, examples) so LLMs get more decision-relevant signal per token.
 - **Module preview meta-tool** (`__apcore_module_preview`, v0.15+) — lets AI orchestrators run `executor.validate()` to predict state changes WITHOUT executing the module (apcore PROTOCOL_SPEC §5.6). Returns `{valid, requires_approval, predicted_changes, checks}`.
 - **Three transports** — stdio (default, for desktop clients), Streamable HTTP, and SSE
 - **JWT authentication** — optional Bearer token auth for HTTP transports with `JWTAuthenticator`, permissive mode, PEM key file support, and env var fallback

@@ -310,8 +310,7 @@ def serve(
         output_formatter: Optional callable ``(dict) -> str`` that formats execution
             results into text for LLM consumption. When None (default), results
             are serialised with ``json.dumps``. Use ``apcore_toolkit.to_markdown``
-            for human-readable Markdown output (install with
-            ``pip install apcore-mcp[markdown]``).
+            for human-readable Markdown output.
         output_format: Optional built-in output format name ("json", "csv",
             "jsonl"). When set, automatically uses the corresponding
             formatter from ``apcore-toolkit``.
