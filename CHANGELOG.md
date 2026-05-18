@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 0.16.0
+
+### Breaking Changes
+
+- **`OpenAIConverter.convert_descriptor(strict=...)` default flipped from `False` to `True`** ([D11-5] / OC-1). Cross-SDK parity with `apcore-mcp-typescript` 0.14.0+, which already defaults to strict mode. Callers that previously relied on the lax default (`additionalProperties` allowed, original `required` ordering preserved) must now pass `strict=False` explicitly. Strict mode injects `additionalProperties: false`, hoists all properties into `required` (sorted alphabetically, with optionals widened to nullable), and emits `"strict": true` on the function definition — the format OpenAI Structured Outputs expects. Note: the top-level `to_openai_tools()` and `APCoreMCP.to_openai_tools()` wrappers (and `OpenAIConverter.convert_registry`) still default to `strict=False` and pass that through; this change only affects callers using `convert_descriptor` directly with no `strict` argument.
+
 ## [0.15.0] - 2026-05-14
 
 Leverages **apcore 0.21.0 + apcore-toolkit 0.7.0**. Promotes three new

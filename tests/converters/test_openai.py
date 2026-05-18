@@ -61,7 +61,31 @@ class TestConvertDescriptor:
         assert "description" in func
         assert "parameters" in func
 
-        # strict key should NOT be present by default
+        # [D11-5] Post-0.16.0: strict=True is now the default (parity with TS).
+        # strict key is present by default.
+        assert func.get("strict") is True
+
+    def test_convert_descriptor_default_is_strict(self, converter, simple_descriptor):
+        """[D11-5] Default behavior is strict=True (parity with TS post-0.14.0).
+
+        BREAKING CHANGE (0.16.0): convert_descriptor's strict parameter default
+        flipped from False to True. Callers that need non-strict output must
+        now pass strict=False explicitly.
+        """
+        result = converter.convert_descriptor(simple_descriptor)
+        func = result["function"]
+        params = func["parameters"]
+
+        # Strict-mode output: strict flag set, additionalProperties=false injected
+        assert func["strict"] is True
+        assert params.get("additionalProperties") is False
+
+    def test_convert_descriptor_explicit_strict_false_disables(
+        self, converter, simple_descriptor
+    ):
+        """[D11-5] Callers can opt out of strict mode by passing strict=False."""
+        result = converter.convert_descriptor(simple_descriptor, strict=False)
+        func = result["function"]
         assert "strict" not in func
 
     def test_convert_descriptor_id_normalization(self, converter, simple_descriptor):
@@ -81,8 +105,12 @@ class TestConvertDescriptor:
         assert result["function"]["name"] == "comfyui-image-resize-v2"
 
     def test_convert_descriptor_schema_conversion(self, converter, simple_descriptor):
-        """input_schema is properly converted via SchemaConverter."""
-        result = converter.convert_descriptor(simple_descriptor)
+        """input_schema is properly converted via SchemaConverter.
+
+        Uses strict=False to assert the un-rewritten required-list ordering.
+        Strict mode (now the default) sorts required alphabetically.
+        """
+        result = converter.convert_descriptor(simple_descriptor, strict=False)
         params = result["function"]["parameters"]
 
         # SchemaConverter preserves simple schemas as-is

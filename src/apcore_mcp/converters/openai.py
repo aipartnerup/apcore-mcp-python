@@ -97,7 +97,7 @@ class OpenAIConverter:
         self,
         descriptor: Any,
         embed_annotations: bool = False,
-        strict: bool = False,
+        strict: bool = True,
         rich_description: bool = False,
     ) -> dict[str, Any]:
         """Convert a single ModuleDescriptor to OpenAI tool definition.
@@ -106,7 +106,10 @@ class OpenAIConverter:
             descriptor: ModuleDescriptor with module_id, description, input_schema,
                 and optional annotations.
             embed_annotations: If True, append annotation hints to description.
-            strict: If True, enable OpenAI strict mode.
+            strict: If True (default since 0.16.0, parity with TS), enable OpenAI
+                strict mode: inject ``additionalProperties: false``, hoist all
+                properties into ``required`` (with optionals widened to nullable),
+                and emit ``strict: true`` on the function. [D11-5]
             rich_description: If True, render the description as
                 apcore-toolkit Markdown (see :func:`convert_registry`).
 
