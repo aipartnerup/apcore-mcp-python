@@ -216,13 +216,18 @@ class ErrorMapper:
                 "details": None,
             }
 
-        # Schema validation errors need special formatting
-        if code == ERROR_CODES["SCHEMA_VALIDATION_ERROR"] and details is not None:
-            formatted_message = self._format_validation_errors(details.get("errors", []))
+        # Schema validation errors need special formatting.
+        # Parity with TS+Rust: always emit the canonical formatted message — never
+        # passthrough error.message (which could leak server-side state). When
+        # details is None/empty, _format_validation_errors([]) returns the canonical
+        # "Schema validation failed".
+        if code == ERROR_CODES["SCHEMA_VALIDATION_ERROR"]:
+            errors_list = details.get("errors", []) if details else []
+            formatted_message = self._format_validation_errors(errors_list)
             result: dict[str, Any] = {
                 "isError": True,
                 "errorType": code,
-                "message": formatted_message if formatted_message else message,
+                "message": formatted_message,
                 "details": details,
             }
             self._attach_ai_guidance(error, result)

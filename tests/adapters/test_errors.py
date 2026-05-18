@@ -170,6 +170,29 @@ class TestErrorMapper:
         assert "name" in result["message"]
         assert "age" in result["message"]
 
+    def test_schema_validation_error_emits_canonical_message_when_details_none(
+        self, mapper: ErrorMapper
+    ) -> None:
+        """[D10-001] SCHEMA_VALIDATION_ERROR with details=None must emit canonical message.
+
+        Parity with TS+Rust: regardless of whether `details` is None or empty, the
+        canonical "Schema validation failed" message is emitted. The original
+        `error.message` must NOT leak through (defense against raw passthrough that
+        could expose server-side state).
+        """
+        error = ModuleError(
+            code="SCHEMA_VALIDATION_ERROR", message="custom raw message"
+        )
+        error.details = None  # explicit None, bypassing the stub's `details or {}`
+
+        result = mapper.to_mcp_error(error)
+
+        assert result["isError"] is True
+        assert result["errorType"] == "SCHEMA_VALIDATION_ERROR"
+        assert result["message"] == "Schema validation failed"
+        # Raw message must not leak
+        assert "custom raw message" not in result["message"]
+
     def test_acl_denied(self, mapper: ErrorMapper) -> None:
         """ACLDeniedError says access denied but does NOT leak caller_id."""
         error = ACLDeniedError("user1", "admin.delete")
