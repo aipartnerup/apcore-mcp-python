@@ -1097,6 +1097,7 @@ class TestAsyncBridgeRouterIntegration:
                 *,
                 progress_token: Any = None,
                 send_notification: Any = None,
+                session_key: Any = None,
             ) -> dict[str, Any]:
                 captured["bridge_submit"] = True
                 return {"task_id": "task-xyz", "status": "pending"}
@@ -1127,6 +1128,74 @@ class TestAsyncBridgeRouterIntegration:
 
         envelope = _json.loads(content[0]["text"])
         assert envelope == {"task_id": "task-xyz", "status": "pending"}
+
+    async def test_async_bridge_submit_propagates_traceparent_and_session_key(self) -> None:
+        """[D11-6] Router-fallback async-bridge dispatch must forward W3C trace
+        context (from `extra._meta.traceparent`) AND the active transport
+        session_key — matching the factory-layer dispatch at
+        ``factory.py:register_handlers``. Pre-fix the router fallback dropped
+        both, silently breaking trace propagation and session mass-cancel
+        indexing for direct-router consumers.
+        """
+
+        from apcore_mcp.server.transport import transport_session_var
+
+        captured: dict[str, Any] = {}
+
+        class FakeBridge:
+            @staticmethod
+            def is_meta_tool(_: str) -> bool:
+                return False
+
+            @staticmethod
+            def is_async_module(_: Any) -> bool:
+                return True
+
+            async def submit(
+                self,
+                module_id: str,
+                arguments: dict[str, Any],
+                context: Any,
+                *,
+                progress_token: Any = None,
+                send_notification: Any = None,
+                session_key: Any = None,
+            ) -> dict[str, Any]:
+                # Snapshot what the router forwarded to the bridge.
+                # Context.create(trace_parent=tp) seeds Context.trace_id from tp.
+                captured["context_trace_id"] = getattr(context, "trace_id", None)
+                captured["session_key"] = session_key
+                return {"task_id": "task-trace", "status": "pending"}
+
+        class StubExec:
+            async def call_async(self, *args: Any, **kwargs: Any) -> Any:
+                return {}
+
+        descriptor_lookup = lambda _: object()  # noqa: E731 — non-None descriptor
+        router = ExecutionRouter(
+            StubExec(),
+            async_bridge=FakeBridge(),
+            descriptor_lookup=descriptor_lookup,
+        )
+
+        # Standard W3C traceparent header (version 00, valid trace/span ids).
+        traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        extra = {"_meta": {"traceparent": traceparent}}
+
+        token = transport_session_var.set("session-A1")
+        try:
+            await router.handle_call("heavy.module", {}, extra=extra)
+        finally:
+            transport_session_var.reset(token)
+
+        # session_key must be forwarded so the bridge can index this task
+        # against the transport session (used for mass-cancel on disconnect).
+        assert captured["session_key"] == "session-A1"
+        # The trace_parent must have been extracted from _meta.traceparent
+        # and seeded into the Context handed to bridge.submit. apcore's
+        # Context.create(trace_parent=tp) sets Context.trace_id from the
+        # parent's trace_id, preserving the W3C trace chain.
+        assert captured["context_trace_id"] == "0af7651916cd43dd8448eb211c80319c"
 
 
 class TestCancellation:
@@ -1206,6 +1275,7 @@ class TestCancellation:
                 *,
                 progress_token: Any = None,
                 send_notification: Any = None,
+                session_key: Any = None,
             ) -> dict[str, Any]:
                 # Capture the cancel-token state observable from inside submit.
                 captured["context_cancel_token"] = getattr(context, "cancel_token", None)

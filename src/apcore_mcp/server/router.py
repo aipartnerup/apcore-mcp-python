@@ -350,13 +350,34 @@ class ExecutionRouter:
                 except Exception:  # noqa: BLE001  # defensive lookup
                     descriptor = None
                 if descriptor is not None and self._async_bridge.is_async_module(descriptor):
+                    # [D11-6] Mirror the factory-layer dispatch
+                    # (factory.py:register_handlers) so direct-router consumers
+                    # (test harnesses, third-party embedders) get the same W3C
+                    # trace propagation and session mass-cancel indexing as the
+                    # production transport path. Pre-fix this fallback dropped
+                    # both, silently breaking trace continuity and per-session
+                    # cancellation for these callers.
+                    trace_parent: TraceParent | None = None
+                    if extra is not None:
+                        meta_in = extra.get("_meta")
+                        if isinstance(meta_in, dict):
+                            raw_tp = meta_in.get("traceparent")
+                            if isinstance(raw_tp, str):
+                                trace_parent = TraceContext.extract({"traceparent": raw_tp})
                     submit_ctx = Context.create(
                         data={},
                         identity=self._resolve_identity(extra),
+                        trace_parent=trace_parent,
                     )
                     # [A-D-210] Attach the already-registered cancel token so
                     # the bridged submit observes cooperative cancellation.
                     submit_ctx.cancel_token = cancel_token
+                    # Forward the active transport session id so the bridge
+                    # can record this task under that session for mass-cancel
+                    # on disconnect. Lazy import to avoid a circular import on
+                    # the server/transport boundary.
+                    from apcore_mcp.server.transport import transport_session_var
+                    session_key = transport_session_var.get()
                     try:
                         envelope = await self._async_bridge.submit(
                             tool_name,
@@ -364,6 +385,7 @@ class ExecutionRouter:
                             submit_ctx,
                             progress_token=(extra or {}).get("progress_token"),
                             send_notification=(extra or {}).get("send_notification"),
+                            session_key=session_key,
                         )
                         return ([{"type": "text", "text": json.dumps(envelope)}], False, None)
                     except Exception as exc:  # noqa: BLE001
