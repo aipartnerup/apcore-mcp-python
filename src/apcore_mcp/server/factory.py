@@ -51,6 +51,20 @@ class MCPServerFactory:
 
         self._error_mapper = ErrorMapper()
 
+    @staticmethod
+    async def prepare() -> bool:
+        """Cross-SDK parity no-op for ``MCPServerFactory.prepare()``.
+
+        TypeScript's factory uses this to prime the apcore-toolkit Markdown
+        renderer (the toolkit's import has measurable startup cost in Node).
+        Python imports apcore-toolkit lazily inside the rendering path, so
+        no priming is required. Exposed as an awaitable no-op so cross-SDK
+        application code can call ``await MCPServerFactory.prepare()`` at
+        startup without a language-specific branch. See
+        ``docs/features/mcp-server-factory.md`` §"Py/Rust no-op for parity".
+        """
+        return False
+
     def create_server(self, name: str = "apcore-mcp", version: str = "0.1.0") -> Server:
         """Create a new MCP low-level Server instance.
 

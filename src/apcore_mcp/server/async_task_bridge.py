@@ -490,6 +490,19 @@ class AsyncTaskBridge:
         module_id = args.get("module_id")
         if not isinstance(module_id, str) or not module_id:
             return self._error_response(ValueError("module_id is required"))
+        # Reject reserved-prefix module ids the same way `_handle_submit_tool`
+        # does — the preview meta-tool must not be used to introspect the
+        # bridge's own meta-tools (apcore PROTOCOL_SPEC §5.6 / docs/features
+        # /async-task-bridge.md contract). Cross-SDK parity: TypeScript and
+        # Rust apply the same guard.
+        if module_id.startswith(RESERVED_PREFIX):
+            return self._error_response(
+                ValueError(
+                    f"Reserved module id: {module_id!r}; the {RESERVED_PREFIX!r} "
+                    "namespace is reserved for apcore-mcp meta-tools and cannot "
+                    "be previewed via this handler."
+                )
+            )
         # Preserve null/missing as None — let the module's preflight
         # rules decide whether absent inputs are acceptable. Reject only
         # structurally-impossible shapes (lists, scalars, etc.).

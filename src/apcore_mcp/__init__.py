@@ -23,7 +23,14 @@ from apcore_mcp.adapters.errors import ErrorMapper, internal_error_response, to_
 from apcore_mcp.adapters.formatter import MCPErrorFormatter, register_mcp_formatter
 from apcore_mcp.adapters.id_normalizer import ModuleIDNormalizer
 from apcore_mcp.adapters.schema import SchemaConverter
-from apcore_mcp.auth import Authenticator, AuthMiddleware, ClaimMapping, JWTAuthenticator
+from apcore_mcp.auth import (
+    Authenticator,
+    AuthMiddleware,
+    ClaimMapping,
+    JWTAuthenticator,
+    auth_identity_var,
+    get_current_identity,
+)
 from apcore_mcp.config import MCP_DEFAULTS, MCP_ENV_PREFIX, MCP_NAMESPACE, register_mcp_namespace
 from apcore_mcp.constants import APCORE_EVENTS, ERROR_CODES, MODULE_ID_PATTERN, REGISTRY_EVENTS
 from apcore_mcp.converters.openai import OpenAIConverter
@@ -72,6 +79,10 @@ __all__ = [
     "JWTAuthenticator",
     "ClaimMapping",
     "AuthMiddleware",
+    # Per-request identity context (cross-SDK parity with TS
+    # ``getCurrentIdentity``/``identityStorage`` and Rust ``AUTH_IDENTITY``)
+    "auth_identity_var",
+    "get_current_identity",
     # Adapters
     "AnnotationMapper",
     "ElicitationApprovalHandler",
