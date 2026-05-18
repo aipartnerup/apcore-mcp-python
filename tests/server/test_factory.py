@@ -52,6 +52,24 @@ class TestCreateServer:
         server = factory.create_server(name="my-server")
         assert server.name == "my-server"
 
+    def test_create_server_rejects_empty_name(self) -> None:
+        """[D10-002] create_server must reject empty name (spec: non-empty)."""
+        factory = MCPServerFactory()
+        with pytest.raises(ValueError, match="non-empty"):
+            factory.create_server(name="")
+
+    def test_create_server_rejects_name_exceeding_255_chars(self) -> None:
+        """[D10-002] create_server must reject name longer than 255 chars (spec: max 255)."""
+        factory = MCPServerFactory()
+        with pytest.raises(ValueError, match="255"):
+            factory.create_server(name="x" * 256)
+
+    def test_create_server_accepts_name_at_255_char_boundary(self) -> None:
+        """[D10-002] create_server accepts exactly 255 chars (inclusive boundary)."""
+        factory = MCPServerFactory()
+        server = factory.create_server(name="x" * 255)
+        assert server.name == "x" * 255
+
 
 class TestBuildTool:
     """Tests for MCPServerFactory.build_tool."""

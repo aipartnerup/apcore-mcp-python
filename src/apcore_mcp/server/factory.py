@@ -69,14 +69,23 @@ class MCPServerFactory:
         """Create a new MCP low-level Server instance.
 
         Args:
-            name: Server name for identification.
+            name: Server name for identification. Must be non-empty and at most
+                255 characters (spec: cross-SDK parity with TS/Rust).
             version: Server version string. Note: the MCP SDK's ``Server``
                 constructor only accepts ``name``; ``version`` is surfaced to
                 clients through :meth:`build_init_options` / ``InitializationOptions``.
 
         Returns:
             A configured Server. Handlers are NOT registered yet.
+
+        Raises:
+            ValueError: If ``name`` is empty or exceeds 255 characters.
         """
+        # [D10-002] Validate name per spec: non-empty, max 255 chars.
+        if not name or len(name) > 255:
+            raise ValueError(
+                f"Server name must be non-empty and at most 255 chars, got {len(name)} chars"
+            )
         return Server(name)
 
     def build_tool(
