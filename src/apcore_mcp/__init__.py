@@ -19,7 +19,7 @@ from starlette.routing import Mount, Route
 from apcore_mcp._utils import resolve_executor, resolve_registry
 from apcore_mcp.adapters.annotations import AnnotationMapper
 from apcore_mcp.adapters.approval import ElicitationApprovalHandler
-from apcore_mcp.adapters.errors import ErrorMapper, internal_error_response, to_mcp_error_any
+from apcore_mcp.adapters.errors import ErrorMapper, internal_error_response
 from apcore_mcp.adapters.formatter import MCPErrorFormatter, register_mcp_formatter
 from apcore_mcp.adapters.id_normalizer import ModuleIDNormalizer
 from apcore_mcp.adapters.schema import SchemaConverter
@@ -91,7 +91,6 @@ __all__ = [
     "MCPErrorFormatter",
     "ModuleIDNormalizer",
     "internal_error_response",
-    "to_mcp_error_any",
     # Converters
     "OpenAIConverter",
     # Config Bus

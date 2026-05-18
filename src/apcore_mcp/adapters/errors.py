@@ -366,12 +366,3 @@ def internal_error_response() -> dict[str, Any]:
     }
 
 
-def to_mcp_error_any(error: Any) -> dict[str, Any]:
-    """Generic-error fallback for arbitrary inputs (free-function form).
-
-    The original error's class name, message, traceback, and details are
-    deliberately ignored (security: avoid leaking server-side state). Returns
-    the canonical envelope unchanged.
-    """
-    del error
-    return internal_error_response()

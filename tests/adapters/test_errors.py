@@ -251,23 +251,24 @@ class TestErrorMapper:
             "details": None,
         }
 
-    def test_to_mcp_error_any_ignores_input_contents(self) -> None:
-        """to_mcp_error_any returns the canonical envelope regardless of input.
+    def test_to_mcp_error_any_ignores_input_contents(self, mapper: ErrorMapper) -> None:
+        """ErrorMapper.to_mcp_error_any returns the canonical envelope regardless of input.
 
         Spec EM-6: the helper deliberately ignores the error's class, message,
-        traceback, and details to avoid leaking server-side state.
+        traceback, and details to avoid leaking server-side state. Parity with
+        TS/Rust: only the method form on ErrorMapper exists.
         """
-        from apcore_mcp.adapters.errors import internal_error_response, to_mcp_error_any
+        from apcore_mcp.adapters.errors import internal_error_response
 
         canonical = internal_error_response()
-        # Free-function form: never leaks input contents
-        assert to_mcp_error_any(ValueError("secret-detail-XYZ")) == canonical
-        assert to_mcp_error_any(RuntimeError("api-key-leak")) == canonical
-        assert to_mcp_error_any({"unexpected": "shape"}) == canonical
-        assert to_mcp_error_any(None) == canonical
+        # Method form on ErrorMapper: never leaks input contents
+        assert mapper.to_mcp_error_any(ValueError("secret-detail-XYZ")) == canonical
+        assert mapper.to_mcp_error_any(RuntimeError("api-key-leak")) == canonical
+        assert mapper.to_mcp_error_any({"unexpected": "shape"}) == canonical
+        assert mapper.to_mcp_error_any(None) == canonical
 
     def test_to_mcp_error_any_method_form_matches_helper(self, mapper: ErrorMapper) -> None:
-        """ErrorMapper.to_mcp_error_any (method form) is symmetric with the free helper."""
+        """ErrorMapper.to_mcp_error_any returns the canonical internal-error envelope."""
         from apcore_mcp.adapters.errors import internal_error_response
 
         assert mapper.to_mcp_error_any(RuntimeError("boom")) == internal_error_response()
