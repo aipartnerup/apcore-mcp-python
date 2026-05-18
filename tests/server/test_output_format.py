@@ -12,8 +12,11 @@ from apcore_mcp.server.router import ExecutionRouter
 
 @pytest.mark.asyncio
 async def test_router_output_format_csv():
-    # Mock executor
+    # Mock executor. registry=None prevents the version_hint cascade
+    # from invoking AsyncMock auto-generated `get_definition`, which would
+    # otherwise emit a "coroutine never awaited" RuntimeWarning.
     executor = AsyncMock()
+    executor.registry = None
     # List of dicts (tabular data)
     result = [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
     executor.call_async.return_value = result
@@ -36,8 +39,11 @@ async def test_router_output_format_csv():
 
 @pytest.mark.asyncio
 async def test_router_output_format_jsonl():
-    # Mock executor
+    # Mock executor. registry=None prevents the version_hint cascade
+    # from invoking AsyncMock auto-generated `get_definition`, which would
+    # otherwise emit a "coroutine never awaited" RuntimeWarning.
     executor = AsyncMock()
+    executor.registry = None
     result = [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
     executor.call_async.return_value = result
 
@@ -56,8 +62,11 @@ async def test_router_output_format_jsonl():
 
 @pytest.mark.asyncio
 async def test_router_output_format_fallback_non_tabular():
-    # Mock executor
+    # Mock executor. registry=None prevents the version_hint cascade
+    # from invoking AsyncMock auto-generated `get_definition`, which would
+    # otherwise emit a "coroutine never awaited" RuntimeWarning.
     executor = AsyncMock()
+    executor.registry = None
     # Non-tabular result (just a string)
     result = "just a string"
     executor.call_async.return_value = result
@@ -75,8 +84,11 @@ async def test_router_output_format_fallback_non_tabular():
 
 @pytest.mark.asyncio
 async def test_router_output_format_single_dict_to_csv():
-    # Mock executor
+    # Mock executor. registry=None prevents the version_hint cascade
+    # from invoking AsyncMock auto-generated `get_definition`, which would
+    # otherwise emit a "coroutine never awaited" RuntimeWarning.
     executor = AsyncMock()
+    executor.registry = None
     # Single dict (one row)
     result = {"name": "Alice", "age": 30}
     executor.call_async.return_value = result

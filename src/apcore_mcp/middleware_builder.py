@@ -43,13 +43,13 @@ def build_middleware_from_config(entries: list[dict[str, Any]]) -> list[Any]:
     try:
         from apcore import (
             ErrorHistoryMiddleware,
-            LoggingMiddleware,
             RetryConfig,
             RetryMiddleware,
         )
     except ImportError as exc:
         raise RuntimeError("Config Bus `mcp.middleware` requires apcore>=0.18 with middleware support") from exc
 
+    from apcore.observability.context_logger import ObsLoggingMiddleware
     from apcore.observability.error_history import ErrorHistory
 
     instances: list[Any] = []
@@ -66,7 +66,7 @@ def build_middleware_from_config(entries: list[dict[str, Any]]) -> list[Any]:
             config = RetryConfig(**kwargs) if kwargs else RetryConfig()
             instances.append(RetryMiddleware(config))
         elif mw_type == "logging":
-            instances.append(LoggingMiddleware(**kwargs))
+            instances.append(ObsLoggingMiddleware(**kwargs))
         elif mw_type == "error_history":
             # ErrorHistoryMiddleware wraps an ErrorHistory instance. Accept
             # max_entries_per_module and max_total_entries as shorthand keys

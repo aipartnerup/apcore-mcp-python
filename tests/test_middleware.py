@@ -35,11 +35,11 @@ def test_build_retry_middleware_with_custom_config():
 
 
 def test_build_logging_middleware():
-    from apcore import LoggingMiddleware
+    from apcore.observability.context_logger import ObsLoggingMiddleware
 
     result = build_middleware_from_config([{"type": "logging"}])
     assert len(result) == 1
-    assert isinstance(result[0], LoggingMiddleware)
+    assert isinstance(result[0], ObsLoggingMiddleware)
 
 
 def test_build_error_history_middleware_with_shorthand_keys():
@@ -59,10 +59,11 @@ def test_build_error_history_middleware_with_shorthand_keys():
 
 
 def test_build_multiple_in_order():
-    from apcore import LoggingMiddleware, RetryMiddleware
+    from apcore import RetryMiddleware
+    from apcore.observability.context_logger import ObsLoggingMiddleware
 
     result = build_middleware_from_config([{"type": "retry"}, {"type": "logging"}])
-    assert [type(m) for m in result] == [RetryMiddleware, LoggingMiddleware]
+    assert [type(m) for m in result] == [RetryMiddleware, ObsLoggingMiddleware]
 
 
 def test_build_unknown_type_raises():
@@ -181,7 +182,8 @@ def test_apcore_mcp_merges_config_and_constructor_middleware():
     insertion order within equal priorities — caller supplies one of each source
     and verifies both show up in the manager.
     """
-    from apcore import LoggingMiddleware, Registry, RetryMiddleware
+    from apcore import Registry, RetryMiddleware
+    from apcore.observability.context_logger import ObsLoggingMiddleware
 
     from apcore_mcp.apcore_mcp import APCoreMCP
 
@@ -191,13 +193,13 @@ def test_apcore_mcp_merges_config_and_constructor_middleware():
     fake_config = MagicMock()
     fake_config.get.side_effect = lambda key, *a, **kw: config_data.get(key)
 
-    user_mw = LoggingMiddleware()
+    user_mw = ObsLoggingMiddleware()
     with patch("apcore.Config.load", return_value=fake_config):
         mcp = APCoreMCP(registry, middleware=[user_mw])
 
     mws = list(mcp._executor._middleware_manager._middlewares)
     assert any(isinstance(m, RetryMiddleware) for m in mws), "Config Bus retry missing"
-    assert user_mw in mws, "Caller-supplied LoggingMiddleware missing"
+    assert user_mw in mws, "Caller-supplied ObsLoggingMiddleware missing"
 
 
 def test_apcore_mcp_no_config_bus_still_works():

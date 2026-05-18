@@ -44,7 +44,8 @@ def _load_fixture() -> dict:
 
 _CLASS_TO_LABEL = {
     "RetryMiddleware": "retry",
-    "LoggingMiddleware": "logging",
+    # ObsLoggingMiddleware (D5-002 migration from deprecated LoggingMiddleware)
+    "ObsLoggingMiddleware": "logging",
     "ErrorHistoryMiddleware": "error_history",
 }
 
