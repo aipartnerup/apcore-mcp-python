@@ -40,7 +40,14 @@ class TestLicenseFileExists:
 
 
 class TestServeAndClassMethodDelegateSameCodePath:
-    """D9-001 — APCoreMCP.serve() and module-level serve() must share code path."""
+    """D9-001 — Module-level serve()/async_serve() must delegate to APCoreMCP.
+
+    Post-D9-001, the canonical implementation lives on :class:`APCoreMCP`.
+    The module-level functions are thin delegators that construct an
+    APCoreMCP and forward to its instance methods. This is the inverse of
+    the pre-0.16.0 wiring (which had the class delegate to the module-level
+    function).
+    """
 
     def _make_registry(self) -> MagicMock:
         m = MagicMock()
@@ -48,85 +55,57 @@ class TestServeAndClassMethodDelegateSameCodePath:
         m.get_definition.return_value = None
         return m
 
-    def test_apcore_mcp_serve_delegates_to_module_serve(self) -> None:
-        """APCoreMCP.serve() must call the module-level serve() internally."""
-        from apcore_mcp.apcore_mcp import APCoreMCP
+    def test_module_serve_delegates_to_apcore_mcp_class(self) -> None:
+        """Module-level serve() must construct APCoreMCP and call its .serve()."""
+        import apcore_mcp
 
         mock_registry = self._make_registry()
 
-        mcp = APCoreMCP.__new__(APCoreMCP)
-        mcp._registry = mock_registry
-        mcp._executor = MagicMock()
-        mcp._name = "test"
-        mcp._version = "1.0"
-        mcp._tags = None
-        mcp._prefix = None
-        mcp._validate_inputs = False
-        mcp._output_formatter = None
-        mcp._output_format = None
-        mcp._metrics_collector = None
-        mcp._authenticator = None
-        mcp._require_auth = True
-        mcp._exempt_paths = None
-        mcp._async_tasks = False
-        mcp._async_max_concurrent = 10
-        mcp._async_max_tasks = 1000
-        mcp._async_bridge = None
-        mcp._usage_collector = None
+        instances: list[MagicMock] = []
 
-        called_with: list[dict] = []
+        def fake_apcore_mcp(*args, **kwargs):
+            inst = MagicMock()
+            inst._init_args = (args, kwargs)
+            instances.append(inst)
+            return inst
 
-        def capturing_serve(*args, **kwargs):
-            called_with.append({"args": args, "kwargs": kwargs})
-            # Don't actually run asyncio.run
-            raise SystemExit(0)
+        with patch("apcore_mcp.APCoreMCP", side_effect=fake_apcore_mcp):
+            apcore_mcp.serve(mock_registry, transport="stdio")
 
-        with patch("apcore_mcp.serve", capturing_serve), contextlib.suppress(SystemExit):
-            mcp.serve(transport="stdio")
-
-        assert len(called_with) == 1, (
-            "APCoreMCP.serve() must delegate to module-level serve(). " f"Called {len(called_with)} times."
+        assert len(instances) == 1, (
+            "Module-level serve() must construct exactly one APCoreMCP. " f"Built {len(instances)}"
         )
+        instances[0].serve.assert_called_once()
+        # transport="stdio" was forwarded
+        call_kwargs = instances[0].serve.call_args.kwargs
+        assert call_kwargs.get("transport") == "stdio"
 
-    async def test_apcore_mcp_async_serve_delegates_to_module_async_serve(self) -> None:
-        """APCoreMCP.async_serve() must delegate to module-level async_serve()."""
-        from apcore_mcp.apcore_mcp import APCoreMCP
+    async def test_module_async_serve_delegates_to_apcore_mcp_class(self) -> None:
+        """Module-level async_serve() must construct APCoreMCP and use its .async_serve()."""
+        import apcore_mcp
 
         mock_registry = self._make_registry()
 
-        mcp = APCoreMCP.__new__(APCoreMCP)
-        mcp._registry = mock_registry
-        mcp._executor = MagicMock()
-        mcp._name = "test"
-        mcp._version = "1.0"
-        mcp._tags = None
-        mcp._prefix = None
-        mcp._validate_inputs = False
-        mcp._output_formatter = None
-        mcp._output_format = None
-        mcp._metrics_collector = None
-        mcp._authenticator = None
-        mcp._require_auth = True
-        mcp._exempt_paths = None
-        mcp._async_tasks = False
-        mcp._async_max_concurrent = 10
-        mcp._async_max_tasks = 1000
-        mcp._async_bridge = None
-        mcp._usage_collector = None
-
-        called_with: list[dict] = []
+        instances: list[MagicMock] = []
 
         @contextlib.asynccontextmanager
-        async def capturing_async_serve(*args, **kwargs):
-            called_with.append({"args": args, "kwargs": kwargs})
+        async def fake_class_async_serve(self, **kwargs):
             yield MagicMock()
 
-        with patch("apcore_mcp.async_serve", capturing_async_serve):
-            async with mcp.async_serve():
+        def fake_apcore_mcp(*args, **kwargs):
+            inst = MagicMock()
+            inst._init_args = (args, kwargs)
+            instances.append(inst)
+            # Delegate to a real async context manager
+            inst.async_serve = lambda **kw: fake_class_async_serve(inst, **kw)
+            return inst
+
+        with patch("apcore_mcp.APCoreMCP", side_effect=fake_apcore_mcp):
+            async with apcore_mcp.async_serve(mock_registry):
                 pass
 
-        assert len(called_with) == 1, (
-            "APCoreMCP.async_serve() must delegate to module-level async_serve(). " f"Called {len(called_with)} times."
+        assert len(instances) == 1, (
+            "Module-level async_serve() must construct exactly one APCoreMCP. " f"Built {len(instances)}"
         )
 
 
@@ -256,16 +235,16 @@ class TestMCPDefaultsWiredIntoServe:
             with patch("apcore.Config") as mock_config_cls:
                 mock_config_cls.load.return_value = mock_config
 
-                import apcore_mcp as _am
-
-                # Monkey-patch the resolve_registry/resolve_executor so we control what
-                # the serve() function receives
-                original_rr = _am.resolve_registry
-                original_re = _am.resolve_executor
-                try:
-                    _am.resolve_registry = lambda x: mock_registry  # type: ignore[assignment]
-                    _am.resolve_executor = lambda *a, **kw: MagicMock()  # type: ignore[assignment]
-
+                # Monkey-patch resolve_registry/resolve_executor at their canonical
+                # site (apcore_mcp._utils). After the D9-001 refactor, APCoreMCP
+                # imports them directly from _utils — patching the package-level
+                # re-exports has no effect.
+                with (
+                    patch("apcore_mcp._utils.resolve_registry", return_value=mock_registry),
+                    patch("apcore_mcp.apcore_mcp.resolve_registry", return_value=mock_registry),
+                    patch("apcore_mcp._utils.resolve_executor", return_value=MagicMock()),
+                    patch("apcore_mcp.apcore_mcp.resolve_executor", return_value=MagicMock()),
+                ):
                     # serve() calls asyncio.run() — we intercept via the captured calls.
                     # asyncio.run may error in test context; we only care about call args.
                     with contextlib.suppress(Exception):
@@ -274,9 +253,6 @@ class TestMCPDefaultsWiredIntoServe:
                             transport="streamable-http",
                             # NOT passing host= — should come from Config Bus
                         )
-                finally:
-                    _am.resolve_registry = original_rr
-                    _am.resolve_executor = original_re
 
         # The call must have happened with the Config Bus host
         assert len(transport_manager_calls) == 1, (

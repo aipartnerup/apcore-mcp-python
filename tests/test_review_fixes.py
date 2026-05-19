@@ -306,13 +306,19 @@ class TestOutputSchemaMapParity:
     """C4/W2 — MCPServer and APCoreMCP must build output_schema_map and pass it to ExecutionRouter."""
 
     def test_apcore_mcp_build_server_components_passes_output_schema_map(self) -> None:
-        """APCoreMCP._build_server_components must pass a non-None output_schema_map to ExecutionRouter."""
+        """APCoreMCP._build_server_components must pass a non-None output_schema_map to ExecutionRouter.
+
+        After the D9-001 refactor, _build_server_components resolves
+        ``MCPServerFactory``/``ExecutionRouter`` via the ``apcore_mcp`` package
+        namespace (so that test patches at ``apcore_mcp.MCPServerFactory`` work
+        for both module-level serve() and APCoreMCP.serve()).
+        """
         from apcore_mcp.apcore_mcp import APCoreMCP
 
-        # Patch at the import sites used inside _build_server_components
+        # Patch the package-level bindings — APCoreMCP looks them up there.
         with (
-            patch("apcore_mcp.server.factory.MCPServerFactory") as mock_factory_cls,
-            patch("apcore_mcp.server.router.ExecutionRouter") as mock_router_cls,
+            patch("apcore_mcp.MCPServerFactory") as mock_factory_cls,
+            patch("apcore_mcp.ExecutionRouter") as mock_router_cls,
         ):
             mock_factory = MagicMock()
             mock_factory_cls.return_value = mock_factory
@@ -337,6 +343,8 @@ class TestOutputSchemaMapParity:
             mcp._validate_inputs = False
             mcp._output_formatter = None
             mcp._output_format = None
+            mcp._redact_output = True
+            mcp._trace = False
             mcp._async_tasks = False
             mcp._async_max_concurrent = 10
             mcp._async_max_tasks = 1000
@@ -363,35 +371,47 @@ class TestConfigBusExceptionNarrowing:
     def test_config_bus_import_error_is_swallowed(self) -> None:
         """ImportError (apcore not installed) should still be silently swallowed.
 
-        After the D9-002 refactor, the Config Bus block was extracted into
-        ``_load_config_bus_overrides``; the narrowed ``except ImportError``
-        clause now lives there. ``serve()`` and ``async_serve()`` delegate
-        to the helper, inheriting its narrowed semantics.
+        After the D9-001/D9-002 refactor, the Config Bus block lives in the
+        shared helper :func:`apcore_mcp.apcore_mcp._load_config_bus_overrides`.
+        The module-level :func:`apcore_mcp.serve` delegates to
+        :class:`APCoreMCP`, which is the canonical consumer of the helper.
         """
 
         import inspect
 
         import apcore_mcp.__init__ as init_mod
+        from apcore_mcp.apcore_mcp import APCoreMCP
 
         # The helper owns the narrowed except clause post-refactor.
         helper_src = inspect.getsource(init_mod._load_config_bus_overrides)
         assert "except ImportError" in helper_src, (
             "_load_config_bus_overrides Config Bus block should catch ImportError, " "not broad Exception"
         )
-        # serve() still references the helper so behaviour is preserved.
-        serve_src = inspect.getsource(init_mod.serve)
-        assert "_load_config_bus_overrides" in serve_src
+        # APCoreMCP.__init__ — the canonical entry point for both module-level
+        # serve() and APCoreMCP().serve() — must consume the helper.
+        init_src = inspect.getsource(APCoreMCP.__init__)
+        assert "_load_config_bus_overrides" in init_src
 
     def test_apcore_mcp_init_narrows_config_bus_catch(self) -> None:
-        """APCoreMCP.__init__ Config Bus block should catch ImportError only."""
+        """APCoreMCP.__init__ Config Bus block should catch ImportError only.
+
+        After the D9-001 refactor, Config Bus loading lives in the shared
+        helper :func:`apcore_mcp.apcore_mcp._load_config_bus_overrides`, which
+        is invoked from ``APCoreMCP.__init__``. The narrowed ``except ImportError``
+        clause lives in the helper.
+        """
         import inspect
 
-        from apcore_mcp.apcore_mcp import APCoreMCP
+        from apcore_mcp.apcore_mcp import APCoreMCP, _load_config_bus_overrides
 
-        src = inspect.getsource(APCoreMCP.__init__)
-        assert (
-            "except ImportError" in src or "ImportError" in src
-        ), "APCoreMCP.__init__ Config Bus block should catch ImportError, not broad Exception"
+        helper_src = inspect.getsource(_load_config_bus_overrides)
+        assert "except ImportError" in helper_src, (
+            "_load_config_bus_overrides Config Bus block should catch ImportError, " "not broad Exception"
+        )
+        # APCoreMCP.__init__ must consume the helper so its narrowed semantics
+        # propagate to construction.
+        init_src = inspect.getsource(APCoreMCP.__init__)
+        assert "_load_config_bus_overrides" in init_src
 
 
 # ---------------------------------------------------------------------------

@@ -1,13 +1,30 @@
-"""APCoreMCP: Unified entry point for apcore-mcp."""
+"""APCoreMCP: Unified entry point for apcore-mcp.
+
+[D9-001] APCoreMCP is the canonical implementation of serve/async_serve/
+to_openai_tools. The module-level functions in :mod:`apcore_mcp` are thin
+delegators that forward kwargs to this class. Prior to 0.16.0 the pipeline
+was duplicated between this module and ``__init__.py``; the duplication was
+eliminated to fix latent bugs (extra_routes typing, metrics_collector
+narrowing) and to ensure feature parity in a single place.
+
+Symbols such as ``MCPServerFactory``, ``ExecutionRouter`` and
+``TransportManager`` are looked up via the :mod:`apcore_mcp` package
+namespace rather than imported directly, so that tests patching
+``apcore_mcp.MCPServerFactory`` (and siblings) continue to intercept the
+construction sites used by APCoreMCP.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import importlib
 import logging
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from starlette.routing import Mount, Route
 
 from apcore_mcp._utils import resolve_executor, resolve_registry
 from apcore_mcp.auth.protocol import Authenticator
@@ -17,6 +34,129 @@ if TYPE_CHECKING:
     from starlette.applications import Starlette
 
 logger = logging.getLogger(__name__)
+
+
+def _load_config_bus_overrides(
+    *,
+    registry: object,
+    strategy: str | None,
+    load_pipeline: bool,
+) -> dict[str, object]:
+    """Load Config Bus overrides for strategy / middleware / ACL / scalar keys.
+
+    [D9-002] Mirrors the TS helper ``loadConfigBusOverrides`` (index.ts:256).
+    Returns a mapping with the keys ``pipeline_strategy``, ``config_middleware``,
+    ``config_acl``, and ``scalars``.
+    """
+    pipeline_strategy: object | None = None
+    config_middleware: list[object] = []
+    config_acl: object | None = None
+    scalars: dict[str, object] = {}
+    _config_bus_loaded = False
+    try:
+        from apcore import Config, build_strategy_from_config
+
+        _config_bus_loaded = True
+    except ImportError as exc:
+        logger.debug("Config Bus not available, skipping: %s", exc)
+        return {
+            "pipeline_strategy": None,
+            "config_middleware": config_middleware,
+            "config_acl": None,
+            "scalars": scalars,
+        }
+    config = Config.load() if Config is not None else None  # type: ignore[possibly-undefined]
+    if not config:
+        return {
+            "pipeline_strategy": None,
+            "config_middleware": config_middleware,
+            "config_acl": None,
+            "scalars": scalars,
+        }
+
+    if load_pipeline:
+        pipeline_config = config.get("mcp.pipeline")
+        if pipeline_config and isinstance(pipeline_config, dict) and build_strategy_from_config is not None:
+            pipeline_strategy = build_strategy_from_config(pipeline_config, registry=registry)
+            if strategy:
+                logger.warning("YAML pipeline config overrides strategy parameter")
+
+    mw_config = config.get("mcp.middleware")
+    if mw_config and isinstance(mw_config, list):
+        from apcore_mcp.middleware_builder import build_middleware_from_config
+
+        config_middleware = build_middleware_from_config(mw_config)
+
+    acl_config = config.get("mcp.acl")
+    if acl_config:
+        from apcore_mcp.acl_builder import build_acl_from_config
+
+        config_acl = build_acl_from_config(acl_config)
+
+    cfg_transport = config.get("mcp.transport")
+    if cfg_transport and isinstance(cfg_transport, str):
+        scalars["transport"] = cfg_transport
+    cfg_host = config.get("mcp.host")
+    if cfg_host and isinstance(cfg_host, str):
+        scalars["host"] = cfg_host
+    cfg_port = config.get("mcp.port")
+    if cfg_port is not None:
+        try:
+            scalars["port"] = int(cfg_port)
+        except (ValueError, TypeError):
+            logger.warning(
+                "mcp.port Config Bus value %r is not an integer; ignoring",
+                cfg_port,
+            )
+    cfg_name = config.get("mcp.name")
+    if cfg_name and isinstance(cfg_name, str):
+        scalars["name"] = cfg_name
+    cfg_log_level = config.get("mcp.log_level")
+    if cfg_log_level and isinstance(cfg_log_level, str):
+        scalars["log_level"] = cfg_log_level
+    cfg_validate = config.get("mcp.validate_inputs")
+    if cfg_validate is not None and isinstance(cfg_validate, bool):
+        scalars["validate_inputs"] = cfg_validate
+    cfg_explorer = config.get("mcp.explorer")
+    if cfg_explorer is not None and isinstance(cfg_explorer, bool):
+        scalars["explorer"] = cfg_explorer
+    cfg_explorer_prefix = config.get("mcp.explorer_prefix")
+    if cfg_explorer_prefix and isinstance(cfg_explorer_prefix, str):
+        scalars["explorer_prefix"] = cfg_explorer_prefix
+    cfg_require_auth = config.get("mcp.require_auth")
+    if cfg_require_auth is not None and isinstance(cfg_require_auth, bool):
+        scalars["require_auth"] = cfg_require_auth
+
+    return {
+        "pipeline_strategy": pipeline_strategy,
+        "config_middleware": config_middleware,
+        "config_acl": config_acl,
+        "scalars": scalars,
+    }
+
+
+def _validate_common_kwargs(
+    *,
+    name: str,
+    tags: list[str] | None,
+    prefix: str | None,
+    log_level: str | None,
+) -> None:
+    """Shared validation used by both APCoreMCP.__init__ and the legacy serve() path."""
+    if not name:
+        raise ValueError("name must not be empty")
+    if len(name) > 255:
+        raise ValueError(f"name exceeds maximum length of 255: {len(name)}")
+    if tags is not None:
+        for tag in tags:
+            if not tag:
+                raise ValueError("Tag values must not be empty")
+    if prefix is not None and not prefix:
+        raise ValueError("prefix must not be empty")
+    if log_level is not None:
+        valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        if log_level.upper() not in valid_levels:
+            raise ValueError(f"Unknown log level: {log_level!r}. Valid: {sorted(valid_levels)}")
 
 
 class APCoreMCP:
@@ -64,12 +204,17 @@ class APCoreMCP:
         approval_handler: object | None = None,
         output_formatter: Callable[[dict], str] | None = None,
         output_format: str | None = None,
+        strategy: str | None = None,
+        redact_output: bool = True,
+        trace: bool = False,
+        dynamic: bool = False,
         middleware: list[object] | None = None,
         acl: object | None = None,
         observability: bool = False,
         async_tasks: bool = True,
         async_max_concurrent: int = 10,
         async_max_tasks: int = 1000,
+        _load_pipeline_from_config: bool = True,
     ) -> None:
         """Create an APCoreMCP instance.
 
@@ -78,45 +223,45 @@ class APCoreMCP:
                 (str or Path), or an existing Registry or Executor instance.
             name: MCP server name (max 255 chars).
             version: MCP server version. Defaults to apcore-mcp package version.
-            tags: Filter modules by tags. Only modules with ALL specified tags are exposed.
+            tags: Filter modules by tags. Only modules with ALL specified tags
+                are exposed.
             prefix: Filter modules by ID prefix.
             log_level: Log level for the apcore_mcp logger (e.g. "DEBUG", "INFO").
             validate_inputs: Validate tool inputs against schemas before execution.
-            metrics_collector: Optional MetricsExporter for Prometheus /metrics endpoint.
+            metrics_collector: Pre-built ``MetricsExporter`` (back-compat) OR
+                the sentinel ``True`` / ``observability=True`` to auto-provision
+                apcore's default ``MetricsCollector`` + middleware.
             authenticator: Optional Authenticator for JWT/token-based auth (HTTP only).
             require_auth: If True, unauthenticated requests receive 401.
             exempt_paths: Exact paths that bypass authentication.
             approval_handler: Optional approval handler for runtime approval support.
             output_formatter: Optional callable that formats dict results into
-                text for LLM consumption.  Defaults to ``None`` (raw JSON).
-                Use ``apcore_toolkit.to_markdown`` for Markdown output.
+                text for LLM consumption. Defaults to ``None`` (raw JSON).
             output_format: Optional built-in output format name ("json", "csv",
                 "jsonl"). When set, automatically uses the corresponding
                 formatter from ``apcore-toolkit``.
-            middleware: Optional list of apcore ``Middleware`` instances to
-                install on the Executor via ``executor.use()``. Appended to
-                any middleware declared under Config Bus key
-                ``mcp.middleware``. Chain execution order is controlled by
-                ``Middleware.priority``, not insertion order.
-            acl: Optional apcore ``ACL`` instance to install via
-                ``executor.set_acl()``. When omitted, the bridge falls back
-                to any ACL declared under Config Bus key ``mcp.acl``.
-                Caller-supplied ACL takes precedence over Config Bus.
+            strategy: Pipeline execution strategy ("standard", "internal",
+                "testing", "performance", "minimal"). Ignored when an Executor
+                is provided directly.
+            redact_output: Redact sensitive fields from tool outputs using
+                ``apcore.redact_sensitive()``. Defaults to True.
+            trace: Enable pipeline trace capture via ``call_async_with_trace()``.
+            dynamic: Enable dynamic tool registration via RegistryListener.
+            middleware: Optional list of apcore ``Middleware`` instances appended
+                to any middleware declared under Config Bus ``mcp.middleware``.
+            acl: Optional apcore ``ACL`` instance. Caller-supplied ACL takes
+                precedence over Config Bus ``mcp.acl``.
+            observability: When True, auto-install ``MetricsMiddleware`` +
+                ``UsageMiddleware`` using freshly provisioned collectors.
+            async_tasks: Enable the AsyncTaskBridge meta tools.
+            async_max_concurrent: Max concurrent async tasks.
+            async_max_tasks: Max total async tasks tracked.
+            _load_pipeline_from_config: Internal flag — when False, Config Bus
+                ``mcp.pipeline`` is ignored (used by ``async_serve``-style entry
+                points where pipeline construction is the caller's job).
         """
-        if not name:
-            raise ValueError("name must not be empty")
-        if len(name) > 255:
-            raise ValueError(f"name exceeds maximum length of 255: {len(name)}")
-        if tags is not None:
-            for tag in tags:
-                if not tag:
-                    raise ValueError("Tag values must not be empty")
-        if prefix is not None and not prefix:
-            raise ValueError("prefix must not be empty")
+        _validate_common_kwargs(name=name, tags=tags, prefix=prefix, log_level=log_level)
         if log_level is not None:
-            valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-            if log_level.upper() not in valid_levels:
-                raise ValueError(f"Unknown log level: {log_level!r}. Valid: {sorted(valid_levels)}")
             logging.getLogger("apcore_mcp").setLevel(getattr(logging, log_level.upper()))
 
         # Resolve backend: str/Path → Registry with discover(), otherwise pass through
@@ -130,52 +275,54 @@ class APCoreMCP:
 
         self._registry = resolve_registry(backend)
 
-        # Load declarative middleware + ACL from Config Bus, then merge with caller args.
-        # Only catch ImportError — apcore may not be installed or may be an older version.
-        # Builder ValueErrors (malformed YAML) must propagate so misconfiguration fails
-        # loudly at startup, as the builders' docstrings promise.
-        config_middleware: list[object] = []
-        config_acl: object | None = None
-        _config_bus_loaded = False
-        try:
-            from apcore import Config
+        # Config Bus overrides — single canonical entry point.
+        _cfg = _load_config_bus_overrides(
+            registry=self._registry,
+            strategy=strategy,
+            load_pipeline=_load_pipeline_from_config,
+        )
+        pipeline_strategy: object | None = _cfg["pipeline_strategy"]
+        config_middleware: list[object] = list(_cfg["config_middleware"])  # type: ignore[arg-type]
+        config_acl: object | None = _cfg["config_acl"]
+        scalars: dict[str, object] = _cfg["scalars"]  # type: ignore[assignment]
 
-            _config_bus_loaded = True
-        except ImportError as exc:
-            logger.debug("Config Bus not available, skipping: %s", exc)
-        if _config_bus_loaded:
-            config = Config.load() if Config is not None else None  # type: ignore[possibly-undefined]
-            if config:
-                mw_config = config.get("mcp.middleware")
-                if mw_config and isinstance(mw_config, list):
-                    from apcore_mcp.middleware_builder import build_middleware_from_config
-
-                    config_middleware = build_middleware_from_config(mw_config)
-                acl_config = config.get("mcp.acl")
-                if acl_config:
-                    from apcore_mcp.acl_builder import build_acl_from_config
-
-                    config_acl = build_acl_from_config(acl_config)
+        # Config Bus values fall between function-signature defaults and the
+        # caller's explicit kwargs; explicit kwargs always win at runtime.
+        if "name" in scalars:
+            name = scalars["name"]  # type: ignore[assignment]
+        if "log_level" in scalars:
+            log_level = scalars["log_level"]  # type: ignore[assignment]
+        if "validate_inputs" in scalars:
+            validate_inputs = scalars["validate_inputs"]  # type: ignore[assignment]
+        if "require_auth" in scalars:
+            require_auth = scalars["require_auth"]  # type: ignore[assignment]
 
         combined_middleware: list[object] = list(config_middleware)
         if middleware:
             combined_middleware.extend(middleware)
 
-        # Caller-supplied ACL wins over Config Bus.
         effective_acl = acl if acl is not None else config_acl
+        if acl is not None and config_acl is not None:
+            logger.info("Caller-supplied acl argument overrides Config Bus `mcp.acl`")
+
+        if strategy is not None and hasattr(backend, "call_async"):
+            logger.warning("strategy parameter ignored when Executor is provided")
 
         self._executor = resolve_executor(
             backend,
             approval_handler=approval_handler,
+            strategy=pipeline_strategy or strategy,
             middleware=combined_middleware,
             acl=effective_acl,
         )
 
-        # Observability: auto-install MetricsMiddleware + UsageMiddleware when requested.
-        # ``metrics_collector`` accepts a pre-built MetricsExporter (back-compat) or the
-        # sentinel ``True``/``observability=True`` to auto-provision defaults.
+        # Observability auto-wiring. ``metrics_collector=True`` or
+        # ``observability=True`` provisions apcore's default MetricsCollector +
+        # MetricsMiddleware (and UsageCollector + UsageMiddleware when
+        # ``observability`` is on). An existing MetricsExporter object is left
+        # untouched.
         self._usage_collector: Any = None
-        resolved_metrics: Any = metrics_collector
+        resolved_metrics: MetricsExporter | None
         if observability or metrics_collector is True:
             from apcore.observability import (
                 MetricsCollector,
@@ -184,16 +331,32 @@ class APCoreMCP:
                 UsageMiddleware,
             )
 
-            # user may supply both collector and observability flag; preserve their object
-            mc = MetricsCollector() if metrics_collector is True or metrics_collector is None else metrics_collector
+            mc: MetricsExporter
+            if metrics_collector is True or metrics_collector is None or metrics_collector is False:
+                mc = MetricsCollector()
+            else:
+                # Narrow: ``metrics_collector`` is a MetricsExporter instance.
+                mc = metrics_collector
             resolved_metrics = mc
             if hasattr(self._executor, "use"):
-                self._executor.use(MetricsMiddleware(mc))
+                # ``MetricsMiddleware`` accepts the concrete ``MetricsCollector``;
+                # we typed the kwarg as the broader ``MetricsExporter`` protocol
+                # for back-compat with user-supplied exporters.
+                self._executor.use(MetricsMiddleware(mc))  # type: ignore[arg-type]
                 if observability:
                     uc = UsageCollector()
                     self._executor.use(UsageMiddleware(uc))
                     self._usage_collector = uc
+        elif metrics_collector is True or metrics_collector is False:
+            # ``True`` is handled above (observability branch); ``False`` is a
+            # legacy way of saying "no metrics". Both collapse to None.
+            resolved_metrics = None
+        else:
+            # ``metrics_collector`` is either a MetricsExporter or None — both
+            # are valid for ``resolved_metrics: MetricsExporter | None``.
+            resolved_metrics = metrics_collector
 
+        # Store configuration for serve()/async_serve()/to_openai_tools()
         self._name = name
         self._version = version
         self._tags = tags
@@ -203,14 +366,17 @@ class APCoreMCP:
         self._authenticator = authenticator
         self._require_auth = require_auth
         self._exempt_paths = exempt_paths
+        self._redact_output = redact_output
+        self._trace = trace
+        self._dynamic = dynamic
         self._async_tasks = async_tasks
         self._async_max_concurrent = async_max_concurrent
         self._async_max_tasks = async_max_tasks
-        self._async_bridge = None
-
+        self._async_bridge: Any = None
         self._output_formatter = output_formatter
         self._output_format = output_format
 
+    # ------------------------------------------------------------------ properties
     @property
     def registry(self) -> Any:
         """The underlying apcore Registry."""
@@ -226,30 +392,22 @@ class APCoreMCP:
         """List all discovered module IDs that will be exposed as tools."""
         return list(self._registry.list(tags=self._tags, prefix=self._prefix))
 
-    def _build_server_components(self) -> tuple[Any, Any, list, Any, Any]:
-        """Build shared MCP server components used by serve() and async_serve().
-
-        Returns:
-            Tuple of (server, router, tools, init_options, version).
-        """
+    # ---------------------------------------------------------- internal helpers
+    def _resolve_version(self) -> str:
         from importlib.metadata import PackageNotFoundError
         from importlib.metadata import version as _pkg_version
 
-        from apcore_mcp.server.async_task_bridge import AsyncTaskBridge
-        from apcore_mcp.server.factory import MCPServerFactory
-        from apcore_mcp.server.router import ExecutionRouter
-
+        if self._version:
+            return self._version
         try:
-            pkg_version = _pkg_version("apcore-mcp")
+            return _pkg_version("apcore-mcp")
         except PackageNotFoundError:
-            pkg_version = "unknown"
-        version = self._version or pkg_version
+            return "unknown"
 
-        factory = MCPServerFactory()
-        server = factory.create_server(name=self._name, version=version)
-        tools = factory.build_tools(self._registry, tags=self._tags, prefix=self._prefix)
-
-        # Build per-tool output schema map for redaction (matches serve() behaviour)
+    def _build_output_schema_map(self) -> dict[str, dict]:
+        """Build per-tool output schema map for redaction."""
+        if not self._redact_output:
+            return {}
         output_schema_map: dict[str, dict] = {}
         for mid in self._registry.list(tags=self._tags, prefix=self._prefix):
             desc = self._registry.get_definition(mid)
@@ -257,19 +415,45 @@ class APCoreMCP:
                 schema = getattr(desc, "output_schema", None)
                 if schema:
                     output_schema_map[mid] = schema
+        return output_schema_map
+
+    def _build_server_components(self) -> tuple[Any, Any, list, Any, str]:
+        """Build shared MCP server components used by serve() and async_serve().
+
+        Returns:
+            Tuple of (server, router, tools, init_options, version).
+
+        Note:
+            ``MCPServerFactory``, ``ExecutionRouter``, and ``AsyncTaskBridge``
+            are resolved via the :mod:`apcore_mcp` package so that tests
+            patching ``apcore_mcp.MCPServerFactory`` / ``apcore_mcp.ExecutionRouter``
+            intercept these construction sites.
+        """
+        _pkg = importlib.import_module("apcore_mcp")
+        MCPServerFactory = _pkg.MCPServerFactory
+        ExecutionRouter = _pkg.ExecutionRouter
+
+        version = self._resolve_version()
+
+        factory = MCPServerFactory()
+        server = factory.create_server(name=self._name, version=version)
+        tools = factory.build_tools(self._registry, tags=self._tags, prefix=self._prefix)
 
         router = ExecutionRouter(
             self._executor,
             validate_inputs=self._validate_inputs,
             output_formatter=self._output_formatter,
             output_format=self._output_format,
-            redact_output=True,
-            output_schema_map=output_schema_map,
+            redact_output=self._redact_output,
+            output_schema_map=self._build_output_schema_map(),
+            trace=self._trace,
         )
 
-        async_bridge: AsyncTaskBridge | None = None
+        async_bridge: Any = None
         if self._async_tasks:
             from apcore.async_task import AsyncTaskManager
+
+            from apcore_mcp.server.async_task_bridge import AsyncTaskBridge
 
             mgr = AsyncTaskManager(
                 self._executor,
@@ -294,20 +478,29 @@ class APCoreMCP:
 
     def _build_explorer_routes(
         self,
-        tools: list,
         router: Any,
         *,
         allow_execute: bool,
         explorer_prefix: str,
-        explorer_title: str = "APCore MCP Explorer",
-        explorer_project_name: str = "apcore-mcp",
-        explorer_project_url: str = "https://github.com/aiperceivable/apcore-mcp-python",
-    ) -> list:
-        """Build explorer mount routes."""
+        explorer_title: str,
+        explorer_project_name: str | None,
+        explorer_project_url: str | None,
+    ) -> list[Route | Mount]:
+        """Build explorer mount routes.
+
+        Builds a parallel non-strict tool list for the Explorer "Try it" UI
+        because strict-mode schemas strip defaults and mark optional fields as
+        ``["string","null"]``, which surfaces as ``null`` in the form.
+        """
+        _pkg = importlib.import_module("apcore_mcp")
+        MCPServerFactory = _pkg.MCPServerFactory
         from apcore_mcp.explorer import create_explorer_mount
 
+        explorer_tools = MCPServerFactory(strict=False).build_tools(
+            self._registry, tags=self._tags, prefix=self._prefix, strict=False
+        )
         mount = create_explorer_mount(
-            tools,
+            explorer_tools,
             router,
             allow_execute=allow_execute,
             explorer_prefix=explorer_prefix,
@@ -320,7 +513,10 @@ class APCoreMCP:
         return [mount]
 
     def _build_auth_middleware(
-        self, *, explorer: bool = False, explorer_prefix: str = "/explorer"
+        self,
+        *,
+        explorer: bool = False,
+        explorer_prefix: str = "/explorer",
     ) -> list[tuple[type, dict]] | None:
         """Build auth middleware list if authenticator is configured."""
         if self._authenticator is None:
@@ -337,6 +533,23 @@ class APCoreMCP:
             mw_kwargs["exempt_prefixes"] = {explorer_prefix}
         return [(AuthMiddleware, mw_kwargs)]
 
+    def _maybe_append_usage_routes(
+        self,
+        extra_routes: list[Route | Mount] | None,
+        *,
+        explorer_prefix: str,
+    ) -> list[Route | Mount] | None:
+        """Append usage routes to ``extra_routes`` when both UsageCollector and
+        explorer routes are present. Mirrors prior pipeline behaviour.
+        """
+        if self._usage_collector is None or extra_routes is None:
+            return extra_routes
+        from apcore_mcp.explorer import create_usage_routes
+
+        extra_routes.extend(create_usage_routes(self._usage_collector, prefix=explorer_prefix))
+        return extra_routes
+
+    # ---------------------------------------------------------------- serve()
     def serve(
         self,
         *,
@@ -349,14 +562,11 @@ class APCoreMCP:
         explorer_prefix: str = "/explorer",
         allow_execute: bool = False,
         explorer_title: str = "APCore MCP Explorer",
-        explorer_project_name: str = "apcore-mcp",
-        explorer_project_url: str = "https://github.com/aiperceivable/apcore-mcp-python",
+        explorer_project_name: str | None = "apcore-mcp",
+        explorer_project_url: str | None = "https://github.com/aiperceivable/apcore-mcp-python",
         output_format: str | None = None,
     ) -> None:
         """Launch the MCP server (blocking).
-
-        Thin wrapper that delegates to the module-level ``serve()`` function,
-        forwarding all instance configuration alongside the call-site options.
 
         Args:
             transport: Transport type - "stdio", "streamable-http", or "sse".
@@ -372,39 +582,115 @@ class APCoreMCP:
             explorer_project_url: Project URL linked in the explorer footer.
             output_format: Built-in output format name ("json", "csv", "jsonl").
         """
-        # Lazy lookup avoids a static import cycle between this module and the
-        # parent package. Resolving via the package keeps test patches that
-        # target ``apcore_mcp.serve`` effective.
+        if explorer and not explorer_prefix.startswith("/"):
+            raise ValueError("explorer_prefix must start with '/'")
+
+        # output_format passed to serve() overrides the instance default for
+        # this run only. We mutate the router below by recomputing it.
+        if output_format is not None:
+            self._output_format = output_format
+
         _pkg = importlib.import_module("apcore_mcp")
-        _pkg.serve(
-            self._executor,
-            transport=transport,
-            host=host,
-            port=port,
-            name=self._name,
-            version=self._version,
-            on_startup=on_startup,
-            on_shutdown=on_shutdown,
-            tags=self._tags,
-            prefix=self._prefix,
-            validate_inputs=self._validate_inputs,
-            metrics_collector=self._metrics_collector,
-            explorer=explorer,
-            explorer_prefix=explorer_prefix,
-            allow_execute=allow_execute,
-            explorer_title=explorer_title,
-            explorer_project_name=explorer_project_name,
-            explorer_project_url=explorer_project_url,
-            authenticator=self._authenticator,
-            require_auth=self._require_auth,
-            exempt_paths=self._exempt_paths,
-            output_formatter=self._output_formatter,
-            output_format=output_format or self._output_format,
-            async_tasks=self._async_tasks,
-            async_max_concurrent=self._async_max_concurrent,
-            async_max_tasks=self._async_max_tasks,
+        TransportManager = _pkg.TransportManager
+
+        # Re-read Config Bus scalar overrides for transport/host/port — these
+        # are only meaningful at serve() time (the ASGI-app entry point ignores
+        # them).
+        _cfg = _load_config_bus_overrides(
+            registry=self._registry,
+            strategy=None,
+            load_pipeline=False,
+        )
+        scalars: dict[str, object] = _cfg["scalars"]  # type: ignore[assignment]
+        if "transport" in scalars:
+            transport = scalars["transport"]  # type: ignore[assignment]
+        if "host" in scalars:
+            host = scalars["host"]  # type: ignore[assignment]
+        if "port" in scalars:
+            port = scalars["port"]  # type: ignore[assignment]
+        if "explorer" in scalars:
+            explorer = scalars["explorer"]  # type: ignore[assignment]
+        if "explorer_prefix" in scalars:
+            explorer_prefix = scalars["explorer_prefix"]  # type: ignore[assignment]
+
+        server, router, tools, init_options, version = self._build_server_components()
+
+        if self._dynamic:
+            from apcore_mcp.server.listener import RegistryListener
+
+            _pkg2 = importlib.import_module("apcore_mcp")
+            MCPServerFactory = _pkg2.MCPServerFactory
+            listener = RegistryListener(self._registry, MCPServerFactory())
+            listener.start()
+            logger.info("RegistryListener started for dynamic tool registration")
+
+        logger.info(
+            "Starting MCP server '%s' v%s with %d tools via %s",
+            self._name,
+            version,
+            len(tools),
+            transport,
         )
 
+        transport_lower = transport.lower()
+        extra_routes: list[Route | Mount] | None = None
+        if explorer and transport_lower in ("streamable-http", "sse"):
+            extra_routes = self._build_explorer_routes(
+                router,
+                allow_execute=allow_execute,
+                explorer_prefix=explorer_prefix,
+                explorer_title=explorer_title,
+                explorer_project_name=explorer_project_name,
+                explorer_project_url=explorer_project_url,
+            )
+
+        auth_middleware: list[tuple[type, dict]] | None = None
+        if self._authenticator is not None and transport_lower in ("streamable-http", "sse"):
+            auth_middleware = self._build_auth_middleware(
+                explorer=explorer,
+                explorer_prefix=explorer_prefix,
+            )
+
+        transport_manager = TransportManager(metrics_collector=self._metrics_collector)
+        transport_manager.set_module_count(len(tools))
+        extra_routes = self._maybe_append_usage_routes(extra_routes, explorer_prefix=explorer_prefix)
+
+        async def _run() -> None:
+            if transport_lower == "stdio":
+                await transport_manager.run_stdio(server, init_options)
+            elif transport_lower == "streamable-http":
+                await transport_manager.run_streamable_http(
+                    server,
+                    init_options,
+                    host=host,
+                    port=port,
+                    extra_routes=extra_routes,
+                    middleware=auth_middleware,
+                )
+            elif transport_lower == "sse":
+                await transport_manager.run_sse(
+                    server,
+                    init_options,
+                    host=host,
+                    port=port,
+                    extra_routes=extra_routes,
+                    middleware=auth_middleware,
+                )
+            else:
+                raise ValueError(
+                    f"Unknown transport: {transport!r}. Expected 'stdio', 'streamable-http', or 'sse'."
+                )
+
+        if on_startup is not None:
+            on_startup()
+
+        try:
+            asyncio.run(_run())
+        finally:
+            if on_shutdown is not None:
+                on_shutdown()
+
+    # ---------------------------------------------------------- async_serve()
     @contextlib.asynccontextmanager
     async def async_serve(
         self,
@@ -413,14 +699,11 @@ class APCoreMCP:
         explorer_prefix: str = "/explorer",
         allow_execute: bool = False,
         explorer_title: str = "APCore MCP Explorer",
-        explorer_project_name: str = "apcore-mcp",
-        explorer_project_url: str = "https://github.com/aiperceivable/apcore-mcp-python",
+        explorer_project_name: str | None = "apcore-mcp",
+        explorer_project_url: str | None = "https://github.com/aiperceivable/apcore-mcp-python",
         output_format: str | None = None,
     ) -> AsyncIterator[Starlette]:
         """Build an MCP Starlette ASGI app for embedding into a larger service.
-
-        Thin wrapper that delegates to the module-level ``async_serve()`` function,
-        forwarding all instance configuration alongside the call-site options.
 
         Use this when you want to mount the MCP server alongside other ASGI apps.
 
@@ -446,32 +729,55 @@ class APCoreMCP:
         Yields:
             A configured Starlette ASGI application with MCP endpoints.
         """
+        if explorer and not explorer_prefix.startswith("/"):
+            raise ValueError("explorer_prefix must start with '/'")
+
+        if output_format is not None:
+            self._output_format = output_format
+
         _pkg = importlib.import_module("apcore_mcp")
-        async with _pkg.async_serve(
-            self._executor,
-            name=self._name,
-            version=self._version,
-            tags=self._tags,
-            prefix=self._prefix,
-            validate_inputs=self._validate_inputs,
-            metrics_collector=self._metrics_collector,
-            explorer=explorer,
-            explorer_prefix=explorer_prefix,
-            allow_execute=allow_execute,
-            explorer_title=explorer_title,
-            explorer_project_name=explorer_project_name,
-            explorer_project_url=explorer_project_url,
-            authenticator=self._authenticator,
-            require_auth=self._require_auth,
-            exempt_paths=self._exempt_paths,
-            output_formatter=self._output_formatter,
-            output_format=output_format or self._output_format,
-            async_tasks=self._async_tasks,
-            async_max_concurrent=self._async_max_concurrent,
-            async_max_tasks=self._async_max_tasks,
+        TransportManager = _pkg.TransportManager
+
+        server, router, tools, init_options, version = self._build_server_components()
+
+        logger.info(
+            "Building MCP app '%s' v%s with %d tools",
+            self._name,
+            version,
+            len(tools),
+        )
+
+        extra_routes: list[Route | Mount] | None = None
+        if explorer:
+            extra_routes = self._build_explorer_routes(
+                router,
+                allow_execute=allow_execute,
+                explorer_prefix=explorer_prefix,
+                explorer_title=explorer_title,
+                explorer_project_name=explorer_project_name,
+                explorer_project_url=explorer_project_url,
+            )
+
+        auth_middleware: list[tuple[type, dict]] | None = None
+        if self._authenticator is not None:
+            auth_middleware = self._build_auth_middleware(
+                explorer=explorer,
+                explorer_prefix=explorer_prefix,
+            )
+
+        transport_manager = TransportManager(metrics_collector=self._metrics_collector)
+        transport_manager.set_module_count(len(tools))
+        extra_routes = self._maybe_append_usage_routes(extra_routes, explorer_prefix=explorer_prefix)
+
+        async with transport_manager.build_streamable_http_app(
+            server,
+            init_options,
+            extra_routes=extra_routes,
+            middleware=auth_middleware,
         ) as app:
             yield app
 
+    # ----------------------------------------------------------- openai tools
     def to_openai_tools(
         self,
         *,

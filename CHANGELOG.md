@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`OpenAIConverter.convert_descriptor(strict=...)` default flipped from `False` to `True`** ([D11-5] / OC-1). Cross-SDK parity with `apcore-mcp-typescript` 0.14.0+, which already defaults to strict mode. Callers that previously relied on the lax default (`additionalProperties` allowed, original `required` ordering preserved) must now pass `strict=False` explicitly. Strict mode injects `additionalProperties: false`, hoists all properties into `required` (sorted alphabetically, with optionals widened to nullable), and emits `"strict": true` on the function definition — the format OpenAI Structured Outputs expects. Note: the top-level `to_openai_tools()` and `APCoreMCP.to_openai_tools()` wrappers (and `OpenAIConverter.convert_registry`) still default to `strict=False` and pass that through; this change only affects callers using `convert_descriptor` directly with no `strict` argument.
 
+### Refactored
+
+- **[D9-001] Collapsed parallel `serve()` / `async_serve()` / `to_openai_tools()` pipelines** into a single canonical implementation on `APCoreMCP`. Prior to 0.16.0 the same pipeline was assembled twice — once in the module-level functions in `apcore_mcp/__init__.py` and once in `APCoreMCP`, which then *delegated back* to the module-level functions. Every new feature had to be wired in two places, which had already produced latent bugs in `extra_routes` typing (`list[Mount]` vs. `list[Route | Mount]`) and `metrics_collector` type narrowing. Post-refactor:
+  - `APCoreMCP` owns Config Bus loading (via the relocated `_load_config_bus_overrides` helper), observability auto-wiring, async-task bridge construction, explorer routes, auth middleware, and transport selection.
+  - Module-level `serve()`, `async_serve()`, and `to_openai_tools()` are now thin delegators that construct an `APCoreMCP` and forward to its instance methods. Their public signatures are unchanged.
+  - `APCoreMCP.__init__` gained five new kwargs (`strategy`, `redact_output`, `trace`, `dynamic`, plus internal `_load_pipeline_from_config`) so it can absorb every option the legacy `serve()` signature exposed.
+  - `APCoreMCP._build_server_components` now resolves `MCPServerFactory` / `ExecutionRouter` via the `apcore_mcp` package namespace so that existing tests patching `apcore_mcp.MCPServerFactory` / `apcore_mcp.ExecutionRouter` intercept both legacy and class-based entry points.
+  - Net source LOC reduction: ~180 lines deleted across the two files. The buggy code paths around `metrics_collector` narrowing (formerly at `__init__.py:442/444/450/557/564/568`) and `extra_routes` typing (formerly at `__init__.py:743/745/751`) are gone, taking the nine pre-existing pyright errors with them.
+
 ## [0.15.0] - 2026-05-14
 
 Leverages **apcore 0.21.0 + apcore-toolkit 0.7.0**. Promotes three new
