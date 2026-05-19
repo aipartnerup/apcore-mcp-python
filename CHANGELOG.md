@@ -5,11 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - 0.16.0
+## [0.16.0] - 2026-05-19
+
+Audit-driven consistency release from `/apcore-skills:audit --scope mcp`. Eight per-repo fixes land here; cross-SDK parity with `apcore-mcp-rust` and `apcore-mcp-typescript` 0.16.0.
 
 ### Breaking Changes
 
 - **`OpenAIConverter.convert_descriptor(strict=...)` default flipped from `False` to `True`** ([D11-5] / OC-1). Cross-SDK parity with `apcore-mcp-typescript` 0.14.0+, which already defaults to strict mode. Callers that previously relied on the lax default (`additionalProperties` allowed, original `required` ordering preserved) must now pass `strict=False` explicitly. Strict mode injects `additionalProperties: false`, hoists all properties into `required` (sorted alphabetically, with optionals widened to nullable), and emits `"strict": true` on the function definition — the format OpenAI Structured Outputs expects. Note: the top-level `to_openai_tools()` and `APCoreMCP.to_openai_tools()` wrappers (and `OpenAIConverter.convert_registry`) still default to `strict=False` and pass that through; this change only affects callers using `convert_descriptor` directly with no `strict` argument.
+
+### Fixed
+
+- **[D10-001] `ErrorMapper.to_mcp_error` emits canonical `"Schema validation failed"` for `SCHEMA_VALIDATION_ERROR` even when `details` is `None`.** Previously Python's `if code == SCHEMA_VALIDATION_ERROR and details is not None` guard fell through to passthrough and emitted the raw `error.message`, while Rust+TS unconditionally emitted `"Schema validation failed"`. Cross-SDK callers grouping logs or doing i18n on the canonical string no longer silently miss Python.
+- **[D10-002] `MCPServerFactory.create_server(name)` now validates non-empty + max 255 chars per spec.** Previously the spec-declared `ValueError` was silently absent; empty / oversized names propagated to the underlying MCP server constructor. Fix applied across all three SDKs.
+- **[D11-6] Router-fallback async-bridge dispatch now extracts `_meta.traceparent` and forwards `transport_session_var.get()` as `session_key`.** Previously the factory layer (`register_handlers`) extracted both, but the defensive router-layer fallback path (`_dispatch`) silently lost W3C trace propagation + session mass-cancel indexing. Direct-router consumers (custom test harnesses) now get parity with the factory path.
 
 ### Refactored
 
@@ -19,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `APCoreMCP.__init__` gained five new kwargs (`strategy`, `redact_output`, `trace`, `dynamic`, plus internal `_load_pipeline_from_config`) so it can absorb every option the legacy `serve()` signature exposed.
   - `APCoreMCP._build_server_components` now resolves `MCPServerFactory` / `ExecutionRouter` via the `apcore_mcp` package namespace so that existing tests patching `apcore_mcp.MCPServerFactory` / `apcore_mcp.ExecutionRouter` intercept both legacy and class-based entry points.
   - Net source LOC reduction: ~180 lines deleted across the two files. The buggy code paths around `metrics_collector` narrowing (formerly at `__init__.py:442/444/450/557/564/568`) and `extra_routes` typing (formerly at `__init__.py:743/745/751`) are gone, taking the nine pre-existing pyright errors with them.
+- **[D9-004] Removed `apcore_mcp.to_mcp_error_any` free function.** The body was effectively `del error; return internal_error_response()` — a no-op delegator that was asymmetric with TypeScript / Rust (method-only on `ErrorMapper`). Callers should use `internal_error_response()` directly (identical observable behavior) or `ErrorMapper().to_mcp_error_any(error)` for the typed-error path.
+- **[D9-007] Deleted `apcore_mcp.inspector` stub package.** A 7-line placeholder with module docstring describing future F-039 scope; zero importers. Will be re-created when the F-039 implementation begins.
+
+### Changed
+
+- **[D5-002] Migrated to `apcore.observability.context_logger.ObsLoggingMiddleware`.** The legacy `LoggingMiddleware` emits a `DeprecationWarning` targeting removal in apcore 1.0.0. Public surface (`log_inputs` / `log_outputs` constructor parameters) is preserved. Suite warnings dropped from 9 to 0.
 
 ## [0.15.0] - 2026-05-14
 
