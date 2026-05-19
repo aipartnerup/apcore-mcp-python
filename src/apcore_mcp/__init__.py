@@ -24,7 +24,10 @@ from apcore_mcp.adapters.errors import ErrorMapper, internal_error_response
 from apcore_mcp.adapters.formatter import MCPErrorFormatter, register_mcp_formatter
 from apcore_mcp.adapters.id_normalizer import ModuleIDNormalizer
 from apcore_mcp.adapters.schema import SchemaConverter
-from apcore_mcp.apcore_mcp import APCoreMCP, _load_config_bus_overrides
+from apcore_mcp.apcore_mcp import APCoreMCP
+from apcore_mcp.apcore_mcp import (
+    _load_config_bus_overrides as _load_config_bus_overrides,  # noqa: F401 - re-export for tests
+)
 from apcore_mcp.auth import (
     Authenticator,
     AuthMiddleware,

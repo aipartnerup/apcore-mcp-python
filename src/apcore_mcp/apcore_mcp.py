@@ -52,11 +52,8 @@ def _load_config_bus_overrides(
     config_middleware: list[object] = []
     config_acl: object | None = None
     scalars: dict[str, object] = {}
-    _config_bus_loaded = False
     try:
         from apcore import Config, build_strategy_from_config
-
-        _config_bus_loaded = True
     except ImportError as exc:
         logger.debug("Config Bus not available, skipping: %s", exc)
         return {
