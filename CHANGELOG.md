@@ -5,9 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.16.0] - 2026-05-19
+## [Unreleased]
 
-Audit-driven consistency release from `/apcore-skills:audit --scope mcp`. Eight per-repo fixes land here; cross-SDK parity with `apcore-mcp-rust` and `apcore-mcp-typescript` 0.16.0.
+Audit-driven consistency work from `/apcore-skills:audit --scope mcp`. Eight per-repo fixes land here; the docs/spec repo (`apcore-mcp/`) remains at 0.15.0 because no spec contracts changed, so SDK versions also stay at 0.15.0 pending an explicit release decision. The entries below describe changes already committed on `main`.
 
 ### Breaking Changes
 
