@@ -275,7 +275,7 @@ def async_serve(
     async_tasks: bool = True,
     async_max_concurrent: int = 10,
     async_max_tasks: int = 1000,
-) -> "_AsyncServeCtx":
+) -> _AsyncServeCtx:
     """Build an MCP Starlette ASGI app for embedding into a larger service.
 
     Thin delegator around :class:`APCoreMCP.async_serve`. Returns an async

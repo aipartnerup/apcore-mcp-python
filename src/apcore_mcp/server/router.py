@@ -364,19 +364,22 @@ class ExecutionRouter:
                             raw_tp = meta_in.get("traceparent")
                             if isinstance(raw_tp, str):
                                 trace_parent = TraceContext.extract({"traceparent": raw_tp})
+                    # [A-D-210] Pass the already-registered cancel token as a
+                    # first-class Context.create() parameter (apcore 0.22.0
+                    # D-24) so the bridged submit observes cooperative
+                    # cancellation without the post-hoc-assignment anti-pattern.
                     submit_ctx = Context.create(
                         data={},
                         identity=self._resolve_identity(extra),
                         trace_parent=trace_parent,
+                        cancel_token=cancel_token,
                     )
-                    # [A-D-210] Attach the already-registered cancel token so
-                    # the bridged submit observes cooperative cancellation.
-                    submit_ctx.cancel_token = cancel_token
                     # Forward the active transport session id so the bridge
                     # can record this task under that session for mass-cancel
                     # on disconnect. Lazy import to avoid a circular import on
                     # the server/transport boundary.
                     from apcore_mcp.server.transport import transport_session_var
+
                     session_key = transport_session_var.get()
                     try:
                         envelope = await self._async_bridge.submit(
@@ -460,7 +463,7 @@ class ExecutionRouter:
 
         # Inbound W3C Trace Context: parse `_meta.traceparent` (per MCP _meta
         # passthrough) and seed the apcore Context so downstream modules
-        # inherit the trace chain. Context.create() in apcore 0.19 handles
+        # inherit the trace chain. Context.create() in apcore handles
         # strict validation (all-zero/all-f → regen with WARN), so we do not
         # duplicate validation here.
         trace_parent: TraceParent | None = None
@@ -471,9 +474,15 @@ class ExecutionRouter:
                 if isinstance(raw_tp, str):
                     trace_parent = TraceContext.extract({"traceparent": raw_tp})
 
-        context = Context.create(data=context_data, identity=identity, trace_parent=trace_parent)
-        # Attach the token to the Context so executor can check it.
-        context.cancel_token = cancel_token
+        # Pass the cancel token as a first-class Context.create() parameter
+        # (apcore 0.22.0 D-24) so the executor can check it — replaces the
+        # former post-hoc ``context.cancel_token = cancel_token`` assignment.
+        context = Context.create(
+            data=context_data,
+            identity=identity,
+            trace_parent=trace_parent,
+            cancel_token=cancel_token,
+        )
 
         # version_hint resolution per spec's 3-source cascade: [A-D-006]
         #   1. extras.version_hint (SDK caller-supplied, highest priority)

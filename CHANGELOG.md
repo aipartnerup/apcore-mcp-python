@@ -5,9 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+
+## [0.15.0] - 2026-05-29
 
 Audit-driven consistency work from `/apcore-skills:audit --scope mcp`. Eight per-repo fixes land here; the docs/spec repo (`apcore-mcp/`) remains at 0.15.0 because no spec contracts changed, so SDK versions also stay at 0.15.0 pending an explicit release decision. The entries below describe changes already committed on `main`.
+
+### Changed
+
+- **Upgraded required runtime to apcore 0.22.0 and apcore-toolkit 0.8.0** (`pyproject.toml`: `apcore>=0.22.0`, `apcore-toolkit>=0.8.0`). Adopts the apcore 0.22.0 `Context.create()` signature unification (D-24): the cancel token registered for each MCP tool call is now passed as the first-class `cancel_token=` parameter at both `ExecutionRouter._dispatch` context-creation sites, replacing the prior post-hoc `context.cancel_token = …` assignment that the apcore 0.22.0 changelog explicitly flagged in `apcore-mcp-python`. No public API change; full suite green (807 passed).
 
 ### Breaking Changes
 
@@ -33,8 +38,6 @@ Audit-driven consistency work from `/apcore-skills:audit --scope mcp`. Eight per
 ### Changed
 
 - **[D5-002] Migrated to `apcore.observability.context_logger.ObsLoggingMiddleware`.** The legacy `LoggingMiddleware` emits a `DeprecationWarning` targeting removal in apcore 1.0.0. Public surface (`log_inputs` / `log_outputs` constructor parameters) is preserved. Suite warnings dropped from 9 to 0.
-
-## [0.15.0] - 2026-05-14
 
 Leverages **apcore 0.21.0 + apcore-toolkit 0.7.0**. Promotes three new
 upstream capabilities into MCP-facing surface area: `Module.preview()`

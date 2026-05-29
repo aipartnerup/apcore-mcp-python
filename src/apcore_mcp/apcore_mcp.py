@@ -427,8 +427,8 @@ class APCoreMCP:
             intercept these construction sites.
         """
         _pkg = importlib.import_module("apcore_mcp")
-        MCPServerFactory = _pkg.MCPServerFactory
-        ExecutionRouter = _pkg.ExecutionRouter
+        MCPServerFactory = _pkg.MCPServerFactory  # noqa: N806
+        ExecutionRouter = _pkg.ExecutionRouter  # noqa: N806
 
         version = self._resolve_version()
 
@@ -490,7 +490,7 @@ class APCoreMCP:
         ``["string","null"]``, which surfaces as ``null`` in the form.
         """
         _pkg = importlib.import_module("apcore_mcp")
-        MCPServerFactory = _pkg.MCPServerFactory
+        MCPServerFactory = _pkg.MCPServerFactory  # noqa: N806
         from apcore_mcp.explorer import create_explorer_mount
 
         explorer_tools = MCPServerFactory(strict=False).build_tools(
@@ -588,7 +588,7 @@ class APCoreMCP:
             self._output_format = output_format
 
         _pkg = importlib.import_module("apcore_mcp")
-        TransportManager = _pkg.TransportManager
+        TransportManager = _pkg.TransportManager  # noqa: N806
 
         # Re-read Config Bus scalar overrides for transport/host/port — these
         # are only meaningful at serve() time (the ASGI-app entry point ignores
@@ -616,7 +616,7 @@ class APCoreMCP:
             from apcore_mcp.server.listener import RegistryListener
 
             _pkg2 = importlib.import_module("apcore_mcp")
-            MCPServerFactory = _pkg2.MCPServerFactory
+            MCPServerFactory = _pkg2.MCPServerFactory  # noqa: N806
             listener = RegistryListener(self._registry, MCPServerFactory())
             listener.start()
             logger.info("RegistryListener started for dynamic tool registration")
@@ -674,9 +674,7 @@ class APCoreMCP:
                     middleware=auth_middleware,
                 )
             else:
-                raise ValueError(
-                    f"Unknown transport: {transport!r}. Expected 'stdio', 'streamable-http', or 'sse'."
-                )
+                raise ValueError(f"Unknown transport: {transport!r}. Expected 'stdio', 'streamable-http', or 'sse'.")
 
         if on_startup is not None:
             on_startup()
@@ -733,7 +731,7 @@ class APCoreMCP:
             self._output_format = output_format
 
         _pkg = importlib.import_module("apcore_mcp")
-        TransportManager = _pkg.TransportManager
+        TransportManager = _pkg.TransportManager  # noqa: N806
 
         server, router, tools, init_options, version = self._build_server_components()
 

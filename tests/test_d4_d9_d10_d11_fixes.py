@@ -244,15 +244,15 @@ class TestMCPDefaultsWiredIntoServe:
                     patch("apcore_mcp.apcore_mcp.resolve_registry", return_value=mock_registry),
                     patch("apcore_mcp._utils.resolve_executor", return_value=MagicMock()),
                     patch("apcore_mcp.apcore_mcp.resolve_executor", return_value=MagicMock()),
-                ):
                     # serve() calls asyncio.run() — we intercept via the captured calls.
                     # asyncio.run may error in test context; we only care about call args.
-                    with contextlib.suppress(Exception):
-                        apcore_mcp.serve(
-                            mock_registry,
-                            transport="streamable-http",
-                            # NOT passing host= — should come from Config Bus
-                        )
+                    contextlib.suppress(Exception),
+                ):
+                    apcore_mcp.serve(
+                        mock_registry,
+                        transport="streamable-http",
+                        # NOT passing host= — should come from Config Bus
+                    )
 
         # The call must have happened with the Config Bus host
         assert len(transport_manager_calls) == 1, (

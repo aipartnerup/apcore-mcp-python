@@ -83,9 +83,7 @@ class MCPServerFactory:
         """
         # [D10-002] Validate name per spec: non-empty, max 255 chars.
         if not name or len(name) > 255:
-            raise ValueError(
-                f"Server name must be non-empty and at most 255 chars, got {len(name)} chars"
-            )
+            raise ValueError(f"Server name must be non-empty and at most 255 chars, got {len(name)} chars")
         return Server(name)
 
     def build_tool(

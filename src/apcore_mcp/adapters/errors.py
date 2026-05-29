@@ -369,5 +369,3 @@ def internal_error_response() -> dict[str, Any]:
         "message": "Internal error occurred",
         "details": None,
     }
-
-
