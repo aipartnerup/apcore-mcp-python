@@ -9,6 +9,31 @@ import pytest
 from apcore_mcp.adapters.errors import ErrorMapper
 
 
+# Declarative user_fixable policy, mirroring apcore 0.24.0 _USER_FIXABLE_BY_CODE.
+_USER_FIXABLE_BY_CODE: dict[str, bool] = {
+    "SCHEMA_VALIDATION_ERROR": True,
+    "GENERAL_INVALID_INPUT": True,
+    "MODULE_NOT_FOUND": True,
+    "VERSION_CONSTRAINT_INVALID": True,
+    "BINDING_SCHEMA_INFERENCE_FAILED": True,
+    "BINDING_SCHEMA_MODE_CONFLICT": True,
+    "BINDING_STRICT_SCHEMA_INCOMPATIBLE": True,
+    "DEPENDENCY_NOT_FOUND": True,
+    "DEPENDENCY_VERSION_MISMATCH": True,
+    "ACL_DENIED": False,
+    "APPROVAL_DENIED": False,
+    "APPROVAL_TIMEOUT": False,
+    "MODULE_TIMEOUT": False,
+    "MODULE_DISABLED": False,
+    "CALL_DEPTH_EXCEEDED": False,
+    "CIRCULAR_CALL": False,
+    "CALL_FREQUENCY_EXCEEDED": False,
+    "GENERAL_INTERNAL_ERROR": False,
+}
+
+_UNSET: Any = object()
+
+
 # Stub error classes that mimic apcore error hierarchy for testing
 # This avoids hard dependency on apcore in unit tests
 class ModuleError(Exception):
@@ -21,6 +46,10 @@ class ModuleError(Exception):
         details: dict[str, Any] | None = None,
         cause: Exception | None = None,
         trace_id: str | None = None,
+        retryable: Any = _UNSET,
+        ai_guidance: str | None = None,
+        user_fixable: Any = _UNSET,
+        suggestion: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -28,6 +57,10 @@ class ModuleError(Exception):
         self.details: dict[str, Any] = details or {}
         self.cause = cause
         self.trace_id = trace_id
+        self.retryable = None if retryable is _UNSET else retryable
+        self.ai_guidance = ai_guidance
+        self.user_fixable = _USER_FIXABLE_BY_CODE.get(code) if user_fixable is _UNSET else user_fixable
+        self.suggestion = suggestion
 
 
 class ModuleNotFoundError(ModuleError):
@@ -375,10 +408,10 @@ class TestErrorMapper:
         assert "suggestion" not in result
 
 
-class TestEM3UserFixableHardcoding:
-    """[EM-3] The bridge stamps userFixable=True on dependency / binding /
-    version-constraint errors to match TS behaviour, since apcore 0.19's
-    error classes don't set user_fixable themselves yet.
+class TestEM3UserFixablePassthrough:
+    """[EM-3] apcore 0.24.0 resolves user_fixable at construction time via
+    _USER_FIXABLE_BY_CODE; the bridge passes it through _attach_ai_guidance
+    with no additional stamping.
     """
 
     @pytest.fixture
@@ -408,7 +441,6 @@ class TestEM3UserFixableHardcoding:
             "BINDING_SCHEMA_INFERENCE_FAILED",
             "BINDING_SCHEMA_MODE_CONFLICT",
             "BINDING_STRICT_SCHEMA_INCOMPATIBLE",
-            "BINDING_POLICY_VIOLATION",
         ],
     )
     def test_user_fixable_codes(self, mapper: ErrorMapper, code: str) -> None:
@@ -422,16 +454,16 @@ class TestEM3UserFixableHardcoding:
         result = mapper.to_mcp_error(err)
         assert "userFixable" not in result
 
-    def test_explicit_false_overrides_default_stamp(self, mapper: ErrorMapper) -> None:
-        """If apcore later sets user_fixable=False, the stamp must not override."""
+    def test_apcore_user_fixable_passes_through(self, mapper: ErrorMapper) -> None:
+        """user_fixable on the apcore error flows through to userFixable in the result."""
         err = ModuleError(code="VERSION_CONSTRAINT_INVALID", message="x")
-        # Bridge stamps True; subsequent _attach_ai_guidance must not overwrite it.
-        # Conversely if upstream sets False explicitly, that wins.
-        err.user_fixable = False
+        # apcore 0.24.0 auto-sets user_fixable=True for this code
         result = mapper.to_mcp_error(err)
-        # Stamped True first; _attach_ai_guidance preserves the existing key.
-        # This is intentional: bridge default reflects the docs-level guarantee.
         assert result["userFixable"] is True
+        # If apcore explicitly overrides to False, the bridge passes it through
+        err.user_fixable = False
+        result2 = mapper.to_mcp_error(err)
+        assert result2["userFixable"] is False
 
     # ── Approval error handling ─────────────────────────────────────────
 

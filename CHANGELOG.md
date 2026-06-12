@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.16.0] - 2026-06-12
+
+Closes [issue #70](https://github.com/aiperceivable/apcore/issues/70): remove bridge-level `user_fixable` stamping now that apcore 0.24.0 resolves it at construction time via `_USER_FIXABLE_BY_CODE`.
+
+### Changed
+
+- **Raised apcore floor to `>=0.24.0`** (`pyproject.toml`). apcore 0.24.0 introduced `_USER_FIXABLE_BY_CODE`, which auto-populates `user_fixable` on `ModuleError` at construction time for all user-actionable codes (`SCHEMA_VALIDATION_ERROR`, `GENERAL_INVALID_INPUT`, `MODULE_NOT_FOUND`, `VERSION_CONSTRAINT_INVALID`, `BINDING_SCHEMA_INFERENCE_FAILED`, `BINDING_SCHEMA_MODE_CONFLICT`, `BINDING_STRICT_SCHEMA_INCOMPATIBLE`, `DEPENDENCY_NOT_FOUND`, `DEPENDENCY_VERSION_MISMATCH` → `True`; governance/system codes → `False`; `MODULE_EXECUTE_ERROR` and unlisted → `None`).
+- **Removed bridge-level `_USER_FIXABLE_CODES` constant and stamping block** from `ErrorMapper._handle_apcore_error` (`src/apcore_mcp/adapters/errors.py`). The bridge no longer overrides or duplicates apcore's own policy; `user_fixable` flows through the existing `_attach_ai_guidance` path unchanged. Removed the fast-path `isinstance` branches for `DependencyNotFoundError` / `DependencyVersionMismatchError` that hardcoded `"userFixable": True`. All 806 tests pass.
+
 ## [0.15.0] - 2026-05-29
 
 Audit-driven consistency work from `/apcore-skills:audit --scope mcp`. Eight per-repo fixes land here; the docs/spec repo (`apcore-mcp/`) remains at 0.15.0 because no spec contracts changed, so SDK versions also stay at 0.15.0 pending an explicit release decision. The entries below describe changes already committed on `main`.

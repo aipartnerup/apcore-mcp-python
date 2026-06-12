@@ -6,8 +6,6 @@ from typing import Any
 
 from apcore.cancel import ExecutionCancelledError
 from apcore.errors import (
-    DependencyNotFoundError,
-    DependencyVersionMismatchError,
     ModuleError,
     TaskLimitExceededError,
 )
@@ -38,17 +36,6 @@ class ErrorMapper:
     # Error codes that require sanitization (hide sensitive details)
     _SANITIZED_ERROR_CODES = {
         ERROR_CODES["ACL_DENIED"],
-    }
-
-    # Error codes that the bridge stamps as userFixable=True.
-    # apcore 0.19 does not set user_fixable on these error classes; the bridge
-    # mirrors the TypeScript errors.ts:241,273 guarantee instead.
-    _USER_FIXABLE_CODES = {
-        "VERSION_CONSTRAINT_INVALID",
-        "BINDING_SCHEMA_INFERENCE_FAILED",
-        "BINDING_SCHEMA_MODE_CONFLICT",
-        "BINDING_STRICT_SCHEMA_INCOMPATIBLE",
-        "BINDING_POLICY_VIOLATION",
     }
 
     def format(self, error: Exception, context: object = None) -> dict[str, Any]:
@@ -125,31 +112,6 @@ class ErrorMapper:
                 "the breaker will move to HALF_OPEN and accept a trial call.",
             )
             return result
-        if isinstance(error, DependencyNotFoundError):
-            # [D10-004] Build the envelope and run _attach_ai_guidance so any
-            # ai_guidance / suggestion / retryable attributes set on the apcore
-            # error flow through to the MCP envelope (mirrors TS+Rust).
-            result = {
-                "isError": True,
-                "errorType": ERROR_CODES["DEPENDENCY_NOT_FOUND"],
-                "message": getattr(error, "message", str(error)),
-                "details": getattr(error, "details", None),
-                "userFixable": True,
-            }
-            self._attach_ai_guidance(error, result)
-            return result
-        if isinstance(error, DependencyVersionMismatchError):
-            # [D10-004] See DependencyNotFoundError above.
-            result = {
-                "isError": True,
-                "errorType": ERROR_CODES["DEPENDENCY_VERSION_MISMATCH"],
-                "message": getattr(error, "message", str(error)),
-                "details": getattr(error, "details", None),
-                "userFixable": True,
-            }
-            self._attach_ai_guidance(error, result)
-            return result
-
         # Check if it's an apcore ModuleError by isinstance (fast path for
         # known hierarchy) or structural duck-typing (fallback for compatibility).
         if isinstance(error, ModuleError) or (
@@ -175,8 +137,7 @@ class ErrorMapper:
         leaking server-side state.
         """
         # Forward known apcore error types (incl. ExecutionCancelledError,
-        # TaskLimitExceededError, CircuitBreakerOpenError, DependencyNotFoundError,
-        # DependencyVersionMismatchError, and every ModuleError subclass).
+        # TaskLimitExceededError, CircuitBreakerOpenError, and every ModuleError subclass).
         if isinstance(error, ModuleError | ExecutionCancelledError):
             return self.to_mcp_error(error)
         return internal_error_response()
@@ -315,18 +276,15 @@ class ErrorMapper:
             self._attach_ai_guidance(error, result)
             return result
 
-        # All other apcore errors: pass through message and details
+        # All other apcore errors: pass through message and details.
+        # user_fixable is resolved by apcore at construction time and flows
+        # through via _attach_ai_guidance (no bridge-level stamping needed).
         result = {
             "isError": True,
             "errorType": code,
             "message": message,
             "details": details,
         }
-        # Stamp userFixable=True for codes the bridge guarantees as user-fixable.
-        # This is done before _attach_ai_guidance so that the stamp wins even
-        # when apcore sets user_fixable=None (not yet set) on the error object.
-        if code in self._USER_FIXABLE_CODES:
-            result["userFixable"] = True
         self._attach_ai_guidance(error, result)
         return result
 
