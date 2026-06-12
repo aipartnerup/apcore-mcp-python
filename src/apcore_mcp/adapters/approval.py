@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
+from typing import Any
 
 from apcore.approval import ApprovalHandler, ApprovalRequest, ApprovalResult
 
@@ -79,3 +81,56 @@ class ElicitationApprovalHandler(ApprovalHandler):
             Always returns rejected since Phase B is not supported.
         """
         return ApprovalResult(status="rejected", reason="Phase B not supported via MCP elicitation")
+
+
+class StorageBackedApprovalHandler(ApprovalHandler):
+    """Phase B approval handler backed by a pluggable ApprovalStore.
+
+    ``request_approval()`` saves a pending record and returns
+    ``ApprovalResult(status="pending", approval_id=...)`` causing apcore to raise
+    ``ApprovalPendingError``, which the bridge maps to ``APPROVAL_PENDING`` in
+    the MCP envelope. The agent receives ``{"errorType": "APPROVAL_PENDING",
+    "details": {"approvalId": "..."}}`` and polls ``__apcore_approval_check``.
+
+    ``check_approval()`` reads the store; called by apcore when the client
+    retries with ``_meta.approvalId`` set.
+
+    ``notify_callback`` (optional) lets callers fan out to Slack/email/etc.
+    Signature: ``async (approval_id: str, module_id: str, arguments: dict) -> None``
+    """
+
+    def __init__(
+        self,
+        store: Any,
+        *,
+        notify_callback: Any | None = None,
+    ) -> None:
+        self._store = store
+        self._notify = notify_callback
+
+    async def request_approval(self, request: ApprovalRequest) -> ApprovalResult:
+        approval_id = str(uuid.uuid4())
+        module_id = getattr(request, "module_id", "unknown")
+        arguments = getattr(request, "arguments", {}) or {}
+
+        await self._store.save_pending(approval_id, module_id, arguments)
+
+        if self._notify is not None:
+            try:
+                await self._notify(approval_id, module_id, arguments)
+            except Exception:
+                logger.warning("notify_callback raised for approval %s", approval_id, exc_info=True)
+
+        return ApprovalResult(status="pending", approval_id=approval_id)
+
+    async def check_approval(self, approval_id: str) -> ApprovalResult:
+        record = await self._store.get_result(approval_id)
+        if record is None:
+            return ApprovalResult(status="rejected", reason="approval_id not found")
+        status = record.get("status", "pending")
+        reason = record.get("reason")
+        if status == "approved":
+            return ApprovalResult(status="approved")
+        if status == "rejected":
+            return ApprovalResult(status="rejected", reason=reason)
+        return ApprovalResult(status="pending", approval_id=approval_id)

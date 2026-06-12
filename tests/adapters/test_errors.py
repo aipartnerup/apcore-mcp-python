@@ -8,7 +8,6 @@ import pytest
 
 from apcore_mcp.adapters.errors import ErrorMapper
 
-
 # Declarative user_fixable policy, mirroring apcore 0.24.0 _USER_FIXABLE_BY_CODE.
 _USER_FIXABLE_BY_CODE: dict[str, bool] = {
     "SCHEMA_VALIDATION_ERROR": True,

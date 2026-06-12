@@ -17,6 +17,7 @@ import apcore_mcp.markdown as _markdown
 from apcore_mcp.adapters.annotations import AnnotationMapper
 from apcore_mcp.adapters.schema import SchemaConverter
 from apcore_mcp.auth.middleware import auth_identity_var
+from apcore_mcp.server.approval_bridge import ApprovalBridge
 from apcore_mcp.server.async_task_bridge import RESERVED_PREFIX, AsyncTaskBridge
 from apcore_mcp.server.transport import transport_session_var
 
@@ -278,6 +279,7 @@ class MCPServerFactory:
         router: Any,
         *,
         async_bridge: AsyncTaskBridge | None = None,
+        approval_bridge: ApprovalBridge | None = None,
         descriptor_lookup: Any = None,
     ) -> None:
         """Register list_tools and call_tool handlers on the Server.
@@ -295,6 +297,9 @@ class MCPServerFactory:
             async_bridge: Optional :class:`AsyncTaskBridge`. When present,
                 four ``__apcore_task_*`` meta-tools are appended to ``tools``
                 and async-hinted modules are routed through the bridge.
+            approval_bridge: Optional :class:`ApprovalBridge`. When present,
+                ``__apcore_approval_check`` meta-tool is appended to ``tools``
+                and approval poll calls are routed through the bridge.
             descriptor_lookup: Optional callable ``(module_id) -> descriptor``
                 used by the handler to detect async-hinted modules and feed
                 the bridge's submit meta-tool.
@@ -304,6 +309,8 @@ class MCPServerFactory:
         combined_tools: list[mcp_types.Tool] = list(tools)
         if async_bridge is not None:
             combined_tools.extend(async_bridge.build_meta_tools())
+        if approval_bridge is not None:
+            combined_tools.extend(approval_bridge.build_meta_tools())
 
         @server.list_tools()
         async def handle_list_tools() -> list[mcp_types.Tool]:
@@ -350,6 +357,9 @@ class MCPServerFactory:
                     resolve_descriptor=descriptor_lookup,
                     router_extra=extra,
                 )
+            # Approval meta-tool route: handled by the approval bridge.
+            elif approval_bridge is not None and approval_bridge.is_meta_tool(name):
+                content, is_error, _trace_id = await approval_bridge.handle_meta_tool(name, arguments or {})
             # Async-hint route: submit to AsyncTaskManager, return task envelope.
             elif (
                 async_bridge is not None

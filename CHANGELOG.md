@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.16.0] - 2026-06-12
 
+### Added
+
+- **Approval Phase B: async polling via `__apcore_approval_check` meta-tool**.
+  apcore-mcp now supports out-of-band human approvals that do not block the MCP connection.
+
+  New public API:
+  - `ApprovalStore` (Protocol) — pluggable persistence interface; three async methods:
+    `save_pending`, `get_result`, `resolve`.
+  - `InMemoryApprovalStore` — in-process implementation for testing/local dev.
+    Ships with bounded memory management: per-record TTL via `call_later`, a background
+    sweep task, and a `max_records` hard cap with oldest-pending eviction.
+    **Not suitable for production** (no persistence, no cross-process sharing).
+  - `StorageBackedApprovalHandler` (implements `apcore.ApprovalHandler`) — writes
+    pending records on `request_approval()`, reads them on `check_approval()`.
+    Optional `notify_callback` lets callers fan out to Slack/email/webhooks.
+  - `ApprovalBridge` — registers `__apcore_approval_check` as an MCP meta-tool,
+    symmetric with `AsyncTaskBridge`.
+
+  Usage::
+
+      from apcore_mcp import APCoreMCP, InMemoryApprovalStore
+
+      store = InMemoryApprovalStore()
+      mcp = APCoreMCP("./extensions", approval_store=store)
+
+      # External system approves out-of-band:
+      await store.resolve(approval_id, approved=True)
+
+  Phase A (synchronous `ElicitationApprovalHandler`) is unchanged. All 841 tests pass.
+
 Closes [issue #70](https://github.com/aiperceivable/apcore/issues/70): remove bridge-level `user_fixable` stamping now that apcore 0.24.0 resolves it at construction time via `_USER_FIXABLE_BY_CODE`.
 
 ### Changed

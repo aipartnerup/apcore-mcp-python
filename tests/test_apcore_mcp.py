@@ -175,10 +175,12 @@ class TestAPCoreMCPInit:
         assert mcp._require_auth is False
         assert mcp._exempt_paths == {"/health"}
 
-    def test_approval_handler_not_stored(self) -> None:
-        """approval_handler is passed to Executor, not stored on instance."""
-        mcp = APCoreMCP(StubRegistry(), approval_handler=MagicMock())
-        assert not hasattr(mcp, "_approval_handler")
+    def test_approval_handler_stored(self) -> None:
+        """approval_handler is stored on instance (used by Phase B ApprovalBridge)."""
+        handler = MagicMock()
+        mcp = APCoreMCP(StubRegistry(), approval_handler=handler)
+        assert hasattr(mcp, "_approval_handler")
+        assert mcp._approval_handler is handler
 
     def test_default_output_formatter_is_none(self) -> None:
         """Default output_formatter is None (raw JSON)."""

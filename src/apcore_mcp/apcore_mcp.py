@@ -199,6 +199,8 @@ class APCoreMCP:
         require_auth: bool = True,
         exempt_paths: set[str] | None = None,
         approval_handler: object | None = None,
+        approval_store: object | None = None,
+        approval_notify: object | None = None,
         output_formatter: Callable[[dict], str] | None = None,
         output_format: str | None = None,
         strategy: str | None = None,
@@ -260,6 +262,13 @@ class APCoreMCP:
         _validate_common_kwargs(name=name, tags=tags, prefix=prefix, log_level=log_level)
         if log_level is not None:
             logging.getLogger("apcore_mcp").setLevel(getattr(logging, log_level.upper()))
+
+        # Auto-construct StorageBackedApprovalHandler when approval_store is given
+        # and no explicit handler was provided.
+        if approval_store is not None and approval_handler is None:
+            from apcore_mcp.adapters.approval import StorageBackedApprovalHandler
+
+            approval_handler = StorageBackedApprovalHandler(approval_store, notify_callback=approval_notify)
 
         # Resolve backend: str/Path → Registry with discover(), otherwise pass through
         if isinstance(extensions_dir_or_backend, str | Path):
@@ -370,6 +379,8 @@ class APCoreMCP:
         self._async_max_concurrent = async_max_concurrent
         self._async_max_tasks = async_max_tasks
         self._async_bridge: Any = None
+        self._approval_handler = approval_handler
+        self._approval_store = approval_store
         self._output_formatter = output_formatter
         self._output_format = output_format
 
@@ -460,12 +471,19 @@ class APCoreMCP:
             async_bridge = AsyncTaskBridge(mgr)
             self._async_bridge = async_bridge
 
+        approval_bridge = None
+        if self._approval_store is not None and self._approval_handler is not None:
+            from apcore_mcp.server.approval_bridge import ApprovalBridge
+
+            approval_bridge = ApprovalBridge(self._approval_handler)
+
         descriptor_lookup = self._registry.get_definition if self._async_tasks else None
         factory.register_handlers(
             server,
             tools,
             router,
             async_bridge=async_bridge,
+            approval_bridge=approval_bridge,
             descriptor_lookup=descriptor_lookup,
         )
         factory.register_resource_handlers(server, self._registry)
@@ -653,28 +671,36 @@ class APCoreMCP:
         extra_routes = self._maybe_append_usage_routes(extra_routes, explorer_prefix=explorer_prefix)
 
         async def _run() -> None:
-            if transport_lower == "stdio":
-                await transport_manager.run_stdio(server, init_options)
-            elif transport_lower == "streamable-http":
-                await transport_manager.run_streamable_http(
-                    server,
-                    init_options,
-                    host=host,
-                    port=port,
-                    extra_routes=extra_routes,
-                    middleware=auth_middleware,
-                )
-            elif transport_lower == "sse":
-                await transport_manager.run_sse(
-                    server,
-                    init_options,
-                    host=host,
-                    port=port,
-                    extra_routes=extra_routes,
-                    middleware=auth_middleware,
-                )
-            else:
-                raise ValueError(f"Unknown transport: {transport!r}. Expected 'stdio', 'streamable-http', or 'sse'.")
+            if self._approval_store is not None:
+                getattr(self._approval_store, "start", lambda: None)()
+            try:
+                if transport_lower == "stdio":
+                    await transport_manager.run_stdio(server, init_options)
+                elif transport_lower == "streamable-http":
+                    await transport_manager.run_streamable_http(
+                        server,
+                        init_options,
+                        host=host,
+                        port=port,
+                        extra_routes=extra_routes,
+                        middleware=auth_middleware,
+                    )
+                elif transport_lower == "sse":
+                    await transport_manager.run_sse(
+                        server,
+                        init_options,
+                        host=host,
+                        port=port,
+                        extra_routes=extra_routes,
+                        middleware=auth_middleware,
+                    )
+                else:
+                    raise ValueError(
+                        f"Unknown transport: {transport!r}. Expected 'stdio', 'streamable-http', or 'sse'."
+                    )
+            finally:
+                if self._approval_store is not None:
+                    getattr(self._approval_store, "stop", lambda: None)()
 
         if on_startup is not None:
             on_startup()
@@ -764,13 +790,19 @@ class APCoreMCP:
         transport_manager.set_module_count(len(tools))
         extra_routes = self._maybe_append_usage_routes(extra_routes, explorer_prefix=explorer_prefix)
 
-        async with transport_manager.build_streamable_http_app(
-            server,
-            init_options,
-            extra_routes=extra_routes,
-            middleware=auth_middleware,
-        ) as app:
-            yield app
+        if self._approval_store is not None:
+            getattr(self._approval_store, "start", lambda: None)()
+        try:
+            async with transport_manager.build_streamable_http_app(
+                server,
+                init_options,
+                extra_routes=extra_routes,
+                middleware=auth_middleware,
+            ) as app:
+                yield app
+        finally:
+            if self._approval_store is not None:
+                getattr(self._approval_store, "stop", lambda: None)()
 
     # ----------------------------------------------------------- openai tools
     def to_openai_tools(

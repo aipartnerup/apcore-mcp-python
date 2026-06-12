@@ -349,6 +349,8 @@ class TestOutputSchemaMapParity:
             mcp._async_max_concurrent = 10
             mcp._async_max_tasks = 1000
             mcp._async_bridge = None
+            mcp._approval_handler = None
+            mcp._approval_store = None
 
             mcp._build_server_components()
 
