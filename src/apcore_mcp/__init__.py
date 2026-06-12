@@ -19,9 +19,9 @@ from typing import Any
 from starlette.applications import Starlette
 
 from apcore_mcp.adapters.annotations import AnnotationMapper
-from apcore_mcp.adapters.approval import ElicitationApprovalHandler
+from apcore_mcp.adapters.approval import ElicitationApprovalHandler, StorageBackedApprovalHandler
 from apcore_mcp.adapters.errors import ErrorMapper, internal_error_response
-from apcore_mcp.adapters.formatter import MCPErrorFormatter, register_mcp_formatter
+from apcore_mcp.adapters.formatter import MCPErrorFormatter, McpErrorFormatter, register_mcp_formatter
 from apcore_mcp.adapters.id_normalizer import ModuleIDNormalizer
 from apcore_mcp.adapters.schema import SchemaConverter
 from apcore_mcp.apcore_mcp import APCoreMCP
@@ -40,6 +40,8 @@ from apcore_mcp.config import MCP_DEFAULTS, MCP_ENV_PREFIX, MCP_NAMESPACE, regis
 from apcore_mcp.constants import APCORE_EVENTS, ERROR_CODES, MODULE_ID_PATTERN, REGISTRY_EVENTS
 from apcore_mcp.converters.openai import OpenAIConverter
 from apcore_mcp.helpers import MCP_ELICIT_KEY, MCP_PROGRESS_KEY, ElicitResult, elicit, report_progress
+from apcore_mcp.approval_store import ApprovalStore, InMemoryApprovalStore
+from apcore_mcp.server.approval_bridge import APPROVAL_META_TOOL_NAMES, ApprovalBridge
 from apcore_mcp.server.async_task_bridge import (
     META_TOOL_NAMES,
     AsyncTaskBridge,
@@ -79,6 +81,12 @@ __all__ = [
     "AsyncTaskBridge",
     "META_TOOL_NAMES",
     "APCORE_META_TOOL_PREFIX",
+    # ApprovalStore and Phase B polling
+    "ApprovalStore",
+    "InMemoryApprovalStore",
+    "StorageBackedApprovalHandler",
+    "ApprovalBridge",
+    "APPROVAL_META_TOOL_NAMES",
     # Authentication
     "Authenticator",
     "JWTAuthenticator",
@@ -94,6 +102,7 @@ __all__ = [
     "SchemaConverter",
     "ErrorMapper",
     "MCPErrorFormatter",
+    "McpErrorFormatter",
     "ModuleIDNormalizer",
     "internal_error_response",
     # Converters

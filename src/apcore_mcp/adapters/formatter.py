@@ -24,6 +24,9 @@ class MCPErrorFormatter:
         return self._mapper.to_mcp_error(error)
 
 
+McpErrorFormatter = MCPErrorFormatter  # canonical PascalCase alias (EM-1, CHANGELOG 0.14.0)
+
+
 def register_mcp_formatter() -> None:
     """Register the MCP error formatter. Safe to call multiple times."""
     try:
