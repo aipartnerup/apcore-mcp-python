@@ -116,6 +116,24 @@ class TransportManager:
                         exc_info=True,
                     )
 
+    async def _run_scoped(
+        self,
+        server: Server,
+        read_stream: Any,
+        write_stream: Any,
+        init_options: InitializationOptions,
+        session_id: str,
+    ) -> None:
+        """Run ``server.run`` bracketed by :meth:`_scoped_session`.
+
+        [TM-4] Single choke point so every transport gets identical
+        session-scoping behaviour: the session id is published via
+        ``transport_session_var`` for the protocol session's lifetime, and
+        ``AsyncTaskBridge.cancel_session_tasks`` fires on teardown.
+        """
+        async with self._scoped_session(session_id):
+            await server.run(read_stream, write_stream, init_options)
+
     def _build_health_response(self) -> dict[str, object]:
         """Build health check response."""
         return {
@@ -167,8 +185,9 @@ class TransportManager:
                     uvicorn.Config(combined, host="0.0.0.0", port=8000)
                 ).serve()
         """
+        session_id = uuid.uuid4().hex
         transport = StreamableHTTPServerTransport(
-            mcp_session_id=uuid.uuid4().hex,
+            mcp_session_id=session_id,
         )
 
         async with transport.connect() as (read_stream, write_stream):
@@ -192,8 +211,11 @@ class TransportManager:
                 for mw_cls, mw_kwargs in middleware:
                     app = mw_cls(app, **mw_kwargs)
 
+            # [TM-4] Bracket the protocol session so ``transport_session_var``
+            # is populated for async-task submissions and so the configured
+            # AsyncTaskBridge mass-cancels session-bound tasks on teardown.
             async with anyio.create_task_group() as tg:
-                tg.start_soon(server.run, read_stream, write_stream, init_options)
+                tg.start_soon(self._run_scoped, server, read_stream, write_stream, init_options, session_id)
                 yield app
                 tg.cancel_scope.cancel()
 
@@ -204,8 +226,12 @@ class TransportManager:
     ) -> None:
         """Start MCP server with stdio transport. Blocks until connection closes."""
         logger.info("Starting stdio transport")
+        # [TM-4] stdio has no wire-level session id; synthesize one so async
+        # tasks submitted over this connection are still tracked and cancelled
+        # when the stdio stream closes.
+        session_id = uuid.uuid4().hex
         async with stdio_server() as (read_stream, write_stream):
-            await server.run(read_stream, write_stream, init_options)
+            await self._run_scoped(server, read_stream, write_stream, init_options, session_id)
 
     async def run_streamable_http(
         self,
@@ -220,8 +246,9 @@ class TransportManager:
         self._validate_host_port(host, port)
         logger.info("Starting streamable-http transport on %s:%d", host, port)
 
+        session_id = uuid.uuid4().hex
         transport = StreamableHTTPServerTransport(
-            mcp_session_id=uuid.uuid4().hex,
+            mcp_session_id=session_id,
         )
 
         async with transport.connect() as (read_stream, write_stream):
@@ -248,9 +275,10 @@ class TransportManager:
             config = uvicorn.Config(app, host=host, port=port, log_level="info")
             uv_server = uvicorn.Server(config)
 
-            # Run both the MCP server and HTTP server concurrently
+            # Run both the MCP server and HTTP server concurrently. [TM-4] The
+            # MCP protocol session is bracketed by ``_scoped_session``.
             async with anyio.create_task_group() as tg:
-                tg.start_soon(server.run, read_stream, write_stream, init_options)
+                tg.start_soon(self._run_scoped, server, read_stream, write_stream, init_options, session_id)
                 tg.start_soon(uv_server.serve)
 
     async def run_sse(
@@ -270,11 +298,15 @@ class TransportManager:
         sse_transport = SseServerTransport("/messages/")
 
         async def handle_sse(request: Any) -> Response:
+            # [TM-4] Each SSE connection is an independent protocol session;
+            # synthesize a per-connection id so its async tasks are tracked
+            # and cancelled when the SSE stream closes.
+            session_id = uuid.uuid4().hex
             async with sse_transport.connect_sse(request.scope, request.receive, request._send) as (
                 read_stream,
                 write_stream,
             ):
-                await server.run(read_stream, write_stream, init_options)
+                await self._run_scoped(server, read_stream, write_stream, init_options, session_id)
             return Response()
 
         async def _health(request: Any) -> JSONResponse:

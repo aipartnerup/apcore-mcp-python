@@ -182,6 +182,34 @@ class TestAPCoreMCPInit:
         assert hasattr(mcp, "_approval_handler")
         assert mcp._approval_handler is handler
 
+    def test_build_server_components_passes_approval_bridge_for_handler_only(self) -> None:
+        """[Problem A] _build_server_components must construct an ApprovalBridge
+        whenever a handler is present, regardless of approval_store.
+
+        Passing StorageBackedApprovalHandler(store) directly as approval_handler
+        (with approval_store unset) must still register the
+        __apcore_approval_check meta-tool. Previously the bridge was gated on
+        both store AND handler, silently breaking Phase B polling.
+        """
+        handler = MagicMock()
+        mcp = APCoreMCP(StubRegistry(), approval_handler=handler, async_tasks=False)
+        assert mcp._approval_store is None
+        assert mcp._approval_handler is handler
+
+        captured: dict[str, Any] = {}
+        real_factory_pkg = __import__("apcore_mcp", fromlist=["MCPServerFactory"])
+        RealFactory = real_factory_pkg.MCPServerFactory  # noqa: N806
+
+        class SpyFactory(RealFactory):  # type: ignore[valid-type, misc]
+            def register_handlers(self, *args: Any, **kwargs: Any) -> None:
+                captured["approval_bridge"] = kwargs.get("approval_bridge")
+                return super().register_handlers(*args, **kwargs)
+
+        with patch("apcore_mcp.MCPServerFactory", SpyFactory):
+            mcp._build_server_components()
+
+        assert captured["approval_bridge"] is not None
+
     def test_default_output_formatter_is_none(self) -> None:
         """Default output_formatter is None (raw JSON)."""
         mcp = APCoreMCP(StubRegistry())

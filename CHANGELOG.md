@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.17.0] - 2026-06-23
+
+Audit-driven hardening of the serve/embed entry points and the Phase B approval
+chain, plus the apcore 0.25 / apcore-toolkit 0.9.1 dependency uplift.
+
+### Added
+
+- **Top-level `serve()` / `async_serve()` now forward `approval_store` /
+  `approval_notify`** to `APCoreMCP`, so Phase B async approval is configurable
+  from the top-level entry points (previously only via the `APCoreMCP` class).
+- **Non-blocking `MCPServer` reached parity with `serve()` / `APCoreMCP`**: it now
+  forwards `output_formatter` / `output_format`, `strategy`, `observability`,
+  `redact_output`, `trace`, explorer branding, approval (`handler` / `store` /
+  `notify`), `middleware`, `acl`, `dynamic`, and shared input validation, via a
+  new shared `APCoreMCP._build_serve_coro()` assembly helper (also used by the
+  blocking `serve()`, removing the duplicated pipeline).
+
+### Fixed
+
+- **Approval-bridge gating was too strict**: `ApprovalBridge` (and the
+  `__apcore_approval_check` meta-tool) is now registered whenever an
+  `approval_handler` is present, no longer requiring `approval_store` as well.
+  Passing a `StorageBackedApprovalHandler(store)` directly as `approval_handler`
+  now registers the meta-tool and starts/stops the store lifecycle end-to-end.
+- **TM-4 session-scoped task cancellation was dead code**: `_scoped_session` and
+  `set_async_task_bridge` were never invoked by the transports, so
+  `transport_session_var` stayed `None` and client disconnects never fired
+  `cancel_session_tasks`. Wired `_run_scoped()` into all four transport entry
+  points (`run_stdio`, `run_streamable_http`, `run_sse`,
+  `build_streamable_http_app`); disconnect-cancellation now actually fires.
+
+### Changed
+
+- Unified explorer-branding defaults between the top-level and instance
+  `serve()` / `async_serve()`; added `dynamic` to top-level `async_serve()` for
+  parity with `serve()`.
+- Raised dependency floors to `apcore>=0.25.0` and `apcore-toolkit>=0.9.1`
+  (drop-in; no consumed API changed). All 853 tests pass.
+
+
 ## [0.16.0] - 2026-06-12
 
 ### Added

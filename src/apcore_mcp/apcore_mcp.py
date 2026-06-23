@@ -471,8 +471,15 @@ class APCoreMCP:
             async_bridge = AsyncTaskBridge(mgr)
             self._async_bridge = async_bridge
 
+        # Register the approval poll meta-tool whenever an approval handler is
+        # present. Phase B (async polling) is driven entirely by the handler's
+        # ``check_approval()`` — the store is an implementation detail of
+        # ``StorageBackedApprovalHandler``. Gating on ``approval_store`` here
+        # broke the legitimate "pass StorageBackedApprovalHandler(store) as
+        # approval_handler directly" usage, where ``self._approval_store`` is
+        # None but the handler still needs ``__apcore_approval_check`` exposed.
         approval_bridge = None
-        if self._approval_store is not None and self._approval_handler is not None:
+        if self._approval_handler is not None:
             from apcore_mcp.server.approval_bridge import ApprovalBridge
 
             approval_bridge = ApprovalBridge(self._approval_handler)
@@ -564,6 +571,111 @@ class APCoreMCP:
         extra_routes.extend(create_usage_routes(self._usage_collector, prefix=explorer_prefix))
         return extra_routes
 
+    def _build_serve_coro(
+        self,
+        *,
+        transport: str,
+        host: str,
+        port: int,
+        explorer: bool,
+        explorer_prefix: str,
+        allow_execute: bool,
+        explorer_title: str,
+        explorer_project_name: str | None,
+        explorer_project_url: str | None,
+    ) -> Callable[[], Any]:
+        """Assemble server components and return the transport-run coroutine.
+
+        Shared by the blocking :meth:`serve` and the non-blocking
+        :class:`apcore_mcp.server.server.MCPServer`, so both entry points get
+        identical wiring: dynamic listener, explorer mount, auth middleware,
+        observability/usage routes, approval-store lifecycle, and the [TM-4]
+        async-task bridge for disconnect-driven cancellation. The returned
+        zero-arg coroutine factory runs the selected transport to completion.
+        """
+        _pkg = importlib.import_module("apcore_mcp")
+        TransportManager = _pkg.TransportManager  # noqa: N806
+
+        server, router, tools, init_options, version = self._build_server_components()
+
+        if self._dynamic:
+            from apcore_mcp.server.listener import RegistryListener
+
+            MCPServerFactory = _pkg.MCPServerFactory  # noqa: N806
+            listener = RegistryListener(self._registry, MCPServerFactory())
+            listener.start()
+            logger.info("RegistryListener started for dynamic tool registration")
+
+        logger.info(
+            "Starting MCP server '%s' v%s with %d tools via %s",
+            self._name,
+            version,
+            len(tools),
+            transport,
+        )
+
+        transport_lower = transport.lower()
+        extra_routes: list[Route | Mount] | None = None
+        if explorer and transport_lower in ("streamable-http", "sse"):
+            extra_routes = self._build_explorer_routes(
+                router,
+                allow_execute=allow_execute,
+                explorer_prefix=explorer_prefix,
+                explorer_title=explorer_title,
+                explorer_project_name=explorer_project_name,
+                explorer_project_url=explorer_project_url,
+            )
+
+        auth_middleware: list[tuple[type, dict]] | None = None
+        if self._authenticator is not None and transport_lower in ("streamable-http", "sse"):
+            auth_middleware = self._build_auth_middleware(
+                explorer=explorer,
+                explorer_prefix=explorer_prefix,
+            )
+
+        transport_manager = TransportManager(metrics_collector=self._metrics_collector)
+        transport_manager.set_module_count(len(tools))
+        # [TM-4] Wire the async-task bridge so client disconnects mass-cancel
+        # session-bound tasks. ``_build_server_components`` populates
+        # ``self._async_bridge`` when ``async_tasks`` is enabled.
+        if self._async_bridge is not None:
+            transport_manager.set_async_task_bridge(self._async_bridge)
+        extra_routes = self._maybe_append_usage_routes(extra_routes, explorer_prefix=explorer_prefix)
+
+        async def _run() -> None:
+            if self._approval_store is not None:
+                getattr(self._approval_store, "start", lambda: None)()
+            try:
+                if transport_lower == "stdio":
+                    await transport_manager.run_stdio(server, init_options)
+                elif transport_lower == "streamable-http":
+                    await transport_manager.run_streamable_http(
+                        server,
+                        init_options,
+                        host=host,
+                        port=port,
+                        extra_routes=extra_routes,
+                        middleware=auth_middleware,
+                    )
+                elif transport_lower == "sse":
+                    await transport_manager.run_sse(
+                        server,
+                        init_options,
+                        host=host,
+                        port=port,
+                        extra_routes=extra_routes,
+                        middleware=auth_middleware,
+                    )
+                else:
+                    raise ValueError(
+                        f"Unknown transport: {transport!r}. Expected 'stdio', 'streamable-http', or 'sse'."
+                    )
+            finally:
+                if self._approval_store is not None:
+                    getattr(self._approval_store, "stop", lambda: None)()
+
+        return _run
+
     # ---------------------------------------------------------------- serve()
     def serve(
         self,
@@ -605,9 +717,6 @@ class APCoreMCP:
         if output_format is not None:
             self._output_format = output_format
 
-        _pkg = importlib.import_module("apcore_mcp")
-        TransportManager = _pkg.TransportManager  # noqa: N806
-
         # Re-read Config Bus scalar overrides for transport/host/port — these
         # are only meaningful at serve() time (the ASGI-app entry point ignores
         # them).
@@ -628,79 +737,17 @@ class APCoreMCP:
         if "explorer_prefix" in scalars:
             explorer_prefix = scalars["explorer_prefix"]  # type: ignore[assignment]
 
-        server, router, tools, init_options, version = self._build_server_components()
-
-        if self._dynamic:
-            from apcore_mcp.server.listener import RegistryListener
-
-            _pkg2 = importlib.import_module("apcore_mcp")
-            MCPServerFactory = _pkg2.MCPServerFactory  # noqa: N806
-            listener = RegistryListener(self._registry, MCPServerFactory())
-            listener.start()
-            logger.info("RegistryListener started for dynamic tool registration")
-
-        logger.info(
-            "Starting MCP server '%s' v%s with %d tools via %s",
-            self._name,
-            version,
-            len(tools),
-            transport,
+        _run = self._build_serve_coro(
+            transport=transport,
+            host=host,
+            port=port,
+            explorer=explorer,
+            explorer_prefix=explorer_prefix,
+            allow_execute=allow_execute,
+            explorer_title=explorer_title,
+            explorer_project_name=explorer_project_name,
+            explorer_project_url=explorer_project_url,
         )
-
-        transport_lower = transport.lower()
-        extra_routes: list[Route | Mount] | None = None
-        if explorer and transport_lower in ("streamable-http", "sse"):
-            extra_routes = self._build_explorer_routes(
-                router,
-                allow_execute=allow_execute,
-                explorer_prefix=explorer_prefix,
-                explorer_title=explorer_title,
-                explorer_project_name=explorer_project_name,
-                explorer_project_url=explorer_project_url,
-            )
-
-        auth_middleware: list[tuple[type, dict]] | None = None
-        if self._authenticator is not None and transport_lower in ("streamable-http", "sse"):
-            auth_middleware = self._build_auth_middleware(
-                explorer=explorer,
-                explorer_prefix=explorer_prefix,
-            )
-
-        transport_manager = TransportManager(metrics_collector=self._metrics_collector)
-        transport_manager.set_module_count(len(tools))
-        extra_routes = self._maybe_append_usage_routes(extra_routes, explorer_prefix=explorer_prefix)
-
-        async def _run() -> None:
-            if self._approval_store is not None:
-                getattr(self._approval_store, "start", lambda: None)()
-            try:
-                if transport_lower == "stdio":
-                    await transport_manager.run_stdio(server, init_options)
-                elif transport_lower == "streamable-http":
-                    await transport_manager.run_streamable_http(
-                        server,
-                        init_options,
-                        host=host,
-                        port=port,
-                        extra_routes=extra_routes,
-                        middleware=auth_middleware,
-                    )
-                elif transport_lower == "sse":
-                    await transport_manager.run_sse(
-                        server,
-                        init_options,
-                        host=host,
-                        port=port,
-                        extra_routes=extra_routes,
-                        middleware=auth_middleware,
-                    )
-                else:
-                    raise ValueError(
-                        f"Unknown transport: {transport!r}. Expected 'stdio', 'streamable-http', or 'sse'."
-                    )
-            finally:
-                if self._approval_store is not None:
-                    getattr(self._approval_store, "stop", lambda: None)()
 
         if on_startup is not None:
             on_startup()
@@ -788,6 +835,9 @@ class APCoreMCP:
 
         transport_manager = TransportManager(metrics_collector=self._metrics_collector)
         transport_manager.set_module_count(len(tools))
+        # [TM-4] Wire the async-task bridge for disconnect-driven cancellation.
+        if self._async_bridge is not None:
+            transport_manager.set_async_task_bridge(self._async_bridge)
         extra_routes = self._maybe_append_usage_routes(extra_routes, explorer_prefix=explorer_prefix)
 
         if self._approval_store is not None:

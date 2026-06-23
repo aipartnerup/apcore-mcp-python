@@ -147,6 +147,56 @@ class TestServeTagsPrefix:
 
 
 # ===========================================================================
+# Tests for serve()/async_serve() approval_store / approval_notify forwarding
+# ===========================================================================
+
+
+class TestServeApprovalForwarding:
+    """[Problem 1] Top-level serve()/async_serve() must forward the Phase B
+    approval params (approval_store, approval_notify) to APCoreMCP, so async
+    approval can be configured without dropping down to the class directly.
+    """
+
+    def test_serve_forwards_approval_store_and_notify(self, registry):
+        store = MagicMock()
+
+        async def notify(*_a, **_kw):
+            return None
+
+        with patch("apcore_mcp.APCoreMCP") as mock_cls:
+            mock_cls.return_value.serve = MagicMock()
+            serve(registry, approval_store=store, approval_notify=notify)
+
+        kwargs = mock_cls.call_args.kwargs
+        assert kwargs["approval_store"] is store
+        assert kwargs["approval_notify"] is notify
+
+    def test_async_serve_forwards_approval_store_and_notify(self, registry):
+        from apcore_mcp import async_serve
+
+        store = MagicMock()
+
+        async def notify(*_a, **_kw):
+            return None
+
+        with patch("apcore_mcp.APCoreMCP") as mock_cls:
+            async_serve(registry, approval_store=store, approval_notify=notify)
+
+        kwargs = mock_cls.call_args.kwargs
+        assert kwargs["approval_store"] is store
+        assert kwargs["approval_notify"] is notify
+
+    def test_async_serve_forwards_dynamic(self, registry):
+        """[Problem D] async_serve gains the dynamic param to match serve()."""
+        from apcore_mcp import async_serve
+
+        with patch("apcore_mcp.APCoreMCP") as mock_cls:
+            async_serve(registry, dynamic=True)
+
+        assert mock_cls.call_args.kwargs["dynamic"] is True
+
+
+# ===========================================================================
 # Tests for serve() log_level parameter
 # ===========================================================================
 

@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from apcore_mcp.auth.protocol import Authenticator
@@ -19,6 +20,18 @@ _VALID_TRANSPORTS = frozenset({"stdio", "streamable-http", "sse"})
 
 class MCPServer:
     """Non-blocking MCP server.
+
+    Runs the MCP server in a background daemon thread so the caller's main
+    thread stays free — the typical shape for embedding an MCP endpoint inside
+    a larger application or framework.
+
+    Capability parity: this wrapper delegates all pipeline assembly to
+    :class:`~apcore_mcp.APCoreMCP`, so it supports the same feature surface as
+    the blocking :func:`~apcore_mcp.serve` entry point — output formatting,
+    pipeline strategy, observability, output redaction, pipeline tracing, the
+    Tool Explorer, runtime approval (handler / store / notify), caller
+    middleware, ACLs, and dynamic registration. The [TM-4] async-task bridge
+    is wired automatically so client disconnects mass-cancel session tasks.
 
     Usage:
         server = MCPServer(registry, transport="streamable-http", port=8000)
@@ -37,12 +50,31 @@ class MCPServer:
         name: str = "apcore-mcp",
         version: str | None = None,
         validate_inputs: bool = False,
-        metrics_collector: MetricsExporter | None = None,
+        metrics_collector: MetricsExporter | bool | None = None,
         tags: list[str] | None = None,
         prefix: str | None = None,
+        log_level: str | None = None,
         authenticator: Authenticator | None = None,
         require_auth: bool = True,
         exempt_paths: set[str] | None = None,
+        approval_handler: object | None = None,
+        approval_store: object | None = None,
+        approval_notify: object | None = None,
+        output_formatter: Callable[[dict], str] | None = None,
+        output_format: str | None = None,
+        strategy: str | None = None,
+        redact_output: bool = True,
+        trace: bool = False,
+        dynamic: bool = False,
+        middleware: list[object] | None = None,
+        acl: object | None = None,
+        observability: bool = False,
+        explorer: bool = False,
+        explorer_prefix: str = "/explorer",
+        allow_execute: bool = False,
+        explorer_title: str = "APCore MCP Explorer",
+        explorer_project_name: str | None = "apcore-mcp",
+        explorer_project_url: str | None = "https://github.com/aiperceivable/apcore-mcp-python",
         async_tasks: bool = True,
         async_max_concurrent: int = 10,
         async_max_tasks: int = 1000,
@@ -50,6 +82,8 @@ class MCPServer:
         transport_lower = transport.lower()
         if transport_lower not in _VALID_TRANSPORTS:
             raise ValueError(f"Unknown transport: {transport!r}. Expected one of {sorted(_VALID_TRANSPORTS)}")
+        if explorer and not explorer_prefix.startswith("/"):
+            raise ValueError("explorer_prefix must start with '/'")
         self._registry_or_executor = registry_or_executor
         self._transport = transport_lower
         self._host = host
@@ -60,9 +94,28 @@ class MCPServer:
         self._metrics_collector = metrics_collector
         self._tags = tags
         self._prefix = prefix
+        self._log_level = log_level
         self._authenticator = authenticator
         self._require_auth = require_auth
         self._exempt_paths = exempt_paths
+        self._approval_handler = approval_handler
+        self._approval_store = approval_store
+        self._approval_notify = approval_notify
+        self._output_formatter = output_formatter
+        self._output_format = output_format
+        self._strategy = strategy
+        self._redact_output = redact_output
+        self._trace = trace
+        self._dynamic = dynamic
+        self._middleware = middleware
+        self._acl = acl
+        self._observability = observability
+        self._explorer = explorer
+        self._explorer_prefix = explorer_prefix
+        self._allow_execute = allow_execute
+        self._explorer_title = explorer_title
+        self._explorer_project_name = explorer_project_name
+        self._explorer_project_url = explorer_project_url
         self._async_tasks = async_tasks
         self._async_max_concurrent = async_max_concurrent
         self._async_max_tasks = async_max_tasks
@@ -105,118 +158,71 @@ class MCPServer:
             self._loop.call_soon_threadsafe(self._loop.stop)
         self._stopped.set()
 
+    def _build_app(self) -> Any:
+        """Construct the configured :class:`APCoreMCP` for this server.
+
+        Centralised so the full capability set (approval, middleware, acl,
+        observability, formatter, redaction, trace, dynamic, explorer) is
+        assembled in exactly one place and stays in lock-step with the
+        blocking ``serve()`` entry point.
+        """
+        from apcore_mcp.apcore_mcp import APCoreMCP
+
+        return APCoreMCP(
+            self._registry_or_executor,
+            name=self._name,
+            version=self._version,
+            tags=self._tags,
+            prefix=self._prefix,
+            log_level=self._log_level,
+            validate_inputs=self._validate_inputs,
+            metrics_collector=self._metrics_collector,
+            authenticator=self._authenticator,
+            require_auth=self._require_auth,
+            exempt_paths=self._exempt_paths,
+            approval_handler=self._approval_handler,
+            approval_store=self._approval_store,
+            approval_notify=self._approval_notify,
+            output_formatter=self._output_formatter,
+            output_format=self._output_format,
+            strategy=self._strategy,
+            redact_output=self._redact_output,
+            trace=self._trace,
+            dynamic=self._dynamic,
+            middleware=self._middleware,
+            acl=self._acl,
+            observability=self._observability,
+            async_tasks=self._async_tasks,
+            async_max_concurrent=self._async_max_concurrent,
+            async_max_tasks=self._async_max_tasks,
+        )
+
     def _run(self) -> None:
-        """Internal: run the server event loop."""
+        """Internal: run the server event loop on this background thread."""
         try:
-            from importlib.metadata import PackageNotFoundError
-            from importlib.metadata import version as _pkg_version
-
-            from apcore_mcp._utils import resolve_executor, resolve_registry
-
-            try:
-                __version__ = _pkg_version("apcore-mcp")
-            except PackageNotFoundError:
-                __version__ = "unknown"
-            from apcore_mcp.server.factory import MCPServerFactory
-            from apcore_mcp.server.router import ExecutionRouter
-            from apcore_mcp.server.transport import TransportManager
-
-            registry = resolve_registry(self._registry_or_executor)
-            executor = resolve_executor(self._registry_or_executor)
-            version = self._version or __version__
-
-            # Build output schema map for per-tool output redaction
-            output_schema_map: dict[str, dict] = {}
-            for module_id in registry.list(tags=self._tags, prefix=self._prefix):
-                descriptor = registry.get_definition(module_id)
-                if descriptor is not None:
-                    schema = getattr(descriptor, "output_schema", None)
-                    if schema:
-                        output_schema_map[module_id] = schema
-
-            factory = MCPServerFactory()
-            server = factory.create_server(name=self._name, version=version)
-            tools = factory.build_tools(registry, tags=self._tags, prefix=self._prefix)
-            router = ExecutionRouter(
-                executor,
-                validate_inputs=self._validate_inputs,
-                output_schema_map=output_schema_map,
+            mcp = self._build_app()
+            run_coro = mcp._build_serve_coro(
+                transport=self._transport,
+                host=self._host,
+                port=self._port,
+                explorer=self._explorer,
+                explorer_prefix=self._explorer_prefix,
+                allow_execute=self._allow_execute,
+                explorer_title=self._explorer_title,
+                explorer_project_name=self._explorer_project_name,
+                explorer_project_url=self._explorer_project_url,
             )
-
-            async_bridge = None
-            if self._async_tasks:
-                from apcore.async_task import AsyncTaskManager
-
-                from apcore_mcp.server.async_task_bridge import AsyncTaskBridge
-
-                async_bridge = AsyncTaskBridge(
-                    AsyncTaskManager(
-                        executor,
-                        max_concurrent=self._async_max_concurrent,
-                        max_tasks=self._async_max_tasks,
-                    )
-                )
-
-            factory.register_handlers(
-                server,
-                tools,
-                router,
-                async_bridge=async_bridge,
-                descriptor_lookup=registry.get_definition if self._async_tasks else None,
-            )
-            factory.register_resource_handlers(server, registry)
-            init_options = factory.build_init_options(
-                server,
-                name=self._name,
-                version=version,
-            )
-
-            # Build auth middleware for HTTP transports
-            auth_middleware: list[tuple[type, dict]] | None = None
-            if self._authenticator is not None and self._transport in ("streamable-http", "sse"):
-                from apcore_mcp.auth import AuthMiddleware
-
-                mw_kwargs: dict[str, object] = {"authenticator": self._authenticator}
-                if not self._require_auth:
-                    mw_kwargs["require_auth"] = False
-                if self._exempt_paths is not None:
-                    mw_kwargs["exempt_paths"] = self._exempt_paths
-                auth_middleware = [(AuthMiddleware, mw_kwargs)]
-
-            transport_manager = TransportManager(metrics_collector=self._metrics_collector)
-            transport_manager.set_module_count(len(tools))
 
             self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
             self._started.set()
 
             try:
-                if self._transport == "stdio":
-                    self._loop.run_until_complete(
-                        transport_manager.run_stdio(server, init_options),
-                    )
-                elif self._transport == "streamable-http":
-                    self._loop.run_until_complete(
-                        transport_manager.run_streamable_http(
-                            server,
-                            init_options,
-                            host=self._host,
-                            port=self._port,
-                            middleware=auth_middleware,
-                        ),
-                    )
-                elif self._transport == "sse":
-                    self._loop.run_until_complete(
-                        transport_manager.run_sse(
-                            server,
-                            init_options,
-                            host=self._host,
-                            port=self._port,
-                            middleware=auth_middleware,
-                        ),
-                    )
+                self._loop.run_until_complete(run_coro())
             finally:
                 self._loop.close()
                 self._stopped.set()
         except Exception as exc:
             self._start_error = exc
             self._started.set()  # unblock start() so it can surface the error
+            self._stopped.set()
