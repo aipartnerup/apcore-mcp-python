@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.17.1] - 2026-07-07
+
+Patch release. Bumps the required `apcore-toolkit` floor to `0.10.0` (which adds the shared annotation-preservation conformance verifier and centralizes the Python `RegistryWriter` — additive, no breaking changes). No code or API changes; all 853 tests pass unmodified against apcore-toolkit 0.10.0.
+
 ## [0.17.0] - 2026-06-23
 
 Audit-driven hardening of the serve/embed entry points and the Phase B approval
