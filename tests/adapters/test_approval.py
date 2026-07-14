@@ -128,6 +128,42 @@ class TestElicitationApprovalHandler:
         assert "Delete a file permanently" in msg
         assert "/tmp/data.csv" in msg
 
+    async def test_request_approval_sends_nonempty_schema(self, handler: ElicitationApprovalHandler) -> None:
+        """Approval elicitation must carry a non-empty object schema; an empty {}
+        breaks form-rendering clients (Cursor / Codex)."""
+        received: list[Any] = []
+
+        async def capture(message: str, schema: Any = None) -> dict[str, Any]:
+            received.append(schema)
+            return {"action": "accept", "content": {}}
+
+        request = self._make_request(context_data={MCP_ELICIT_KEY: capture})
+        await handler.request_approval(request)
+
+        assert len(received) == 1
+        schema = received[0]
+        assert isinstance(schema, dict) and schema, "schema must be a non-empty dict"
+        assert schema.get("type") == "object"
+        assert "approve" in schema.get("properties", {})
+
+    async def test_request_approval_accept_but_approve_false(self, handler: ElicitationApprovalHandler) -> None:
+        """action=accept with content.approve=False -> rejected (explicit decline via form field)."""
+        elicit_mock = AsyncMock(return_value={"action": "accept", "content": {"approve": False}})
+        request = self._make_request(context_data={MCP_ELICIT_KEY: elicit_mock})
+
+        result = await handler.request_approval(request)
+
+        assert result.status == "rejected"
+
+    async def test_request_approval_accept_with_approve_true(self, handler: ElicitationApprovalHandler) -> None:
+        """action=accept with content.approve=True -> approved."""
+        elicit_mock = AsyncMock(return_value={"action": "accept", "content": {"approve": True}})
+        request = self._make_request(context_data={MCP_ELICIT_KEY: elicit_mock})
+
+        result = await handler.request_approval(request)
+
+        assert result.status == "approved"
+
     async def test_isinstance_check_passes(self) -> None:
         """ElicitationApprovalHandler passes isinstance check against ApprovalHandler protocol."""
         from apcore.approval import ApprovalHandler

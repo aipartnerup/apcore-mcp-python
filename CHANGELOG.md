@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.17.2] - 2026-07-14
+
+Patch release. Fixes the MCP elicitation approval flow and bumps the required `apcore` floor to `0.26.0` (Execution Policy §7.9 / governance events / no-handler fail-loud — additive, no breaking changes). All 856 tests pass (3 new).
+
+### Fixed
+
+- **`ElicitationApprovalHandler` now sends a non-empty elicitation `requestedSchema`.** The approval elicitation was previously sent with an empty `{}` schema; minimal SDK clients tolerate this, but clients that render an approval form (Cursor, Codex, ...) ignore or reject an empty schema, so the request returned no response and the gate failed closed ("Elicitation returned no response"). The handler now sends an object schema with a boolean `approve` field and honors an explicit `approve: false` from the form.
+- **Elicitation failures are no longer swallowed silently.** The `ExecutionRouter` elicit callback and the approval handler now log at `warning` (was `debug`) with the traceback, so a failing elicitation surfaces instead of silently denying.
+
+### Changed
+
+- **Required `apcore` floor raised to `>=0.26.0`** to align the ecosystem on the 0.26.0 governance layer. Additive on the apcore side; all existing tests pass unmodified.
+
 ## [0.17.1] - 2026-07-07
 
 Patch release. Bumps the required `apcore-toolkit` floor to `0.10.0` (which adds the shared annotation-preservation conformance verifier and centralizes the Python `RegistryWriter` — additive, no breaking changes). No code or API changes; all 853 tests pass unmodified against apcore-toolkit 0.10.0.

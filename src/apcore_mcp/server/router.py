@@ -449,7 +449,7 @@ class ExecutionRouter:
                         "content": result.content,
                     }
                 except Exception:
-                    logger.debug("Elicitation request failed", exc_info=True)
+                    logger.warning("Elicitation request failed", exc_info=True)
                     return None
 
             context_data[MCP_ELICIT_KEY] = _elicit_callback

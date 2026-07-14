@@ -13,6 +13,24 @@ from apcore_mcp.helpers import MCP_ELICIT_KEY
 
 logger = logging.getLogger(__name__)
 
+# JSON Schema (MCP elicitation requestedSchema) for a yes/no approval prompt.
+# Primitive-only per the elicitation spec; a boolean gives form-rendering
+# clients (Cursor, Codex, ...) a concrete control to display. An empty schema is
+# tolerated by minimal SDK clients but ignored/rejected by clients that render a
+# form, so the request returns no response and the gate fails closed.
+_APPROVAL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "title": "Approval required",
+    "properties": {
+        "approve": {
+            "type": "boolean",
+            "title": "Approve this action?",
+            "description": "Select yes to allow the operation to proceed.",
+        }
+    },
+    "required": ["approve"],
+}
+
 
 class ElicitationApprovalHandler(ApprovalHandler):
     """Bridges MCP elicitation to apcore's approval system.
@@ -53,20 +71,30 @@ class ElicitationApprovalHandler(ApprovalHandler):
         )
 
         try:
-            result = await elicit_callback(message)
+            # Send a proper (non-empty) schema so form-rendering clients can
+            # display an approve/deny control; an empty {} is silently dropped.
+            result = await elicit_callback(message, _APPROVAL_SCHEMA)
         except Exception:
-            logger.debug("Elicitation approval request failed", exc_info=True)
+            logger.warning("Elicitation approval request failed", exc_info=True)
             return ApprovalResult(status="rejected", reason="Elicitation request failed")
 
         if result is None:
             return ApprovalResult(status="rejected", reason="Elicitation returned no response")
 
         action = result.get("action") if isinstance(result, dict) else getattr(result, "action", None)
+        content = result.get("content") if isinstance(result, dict) else getattr(result, "content", None)
 
-        if action == "accept":
-            return ApprovalResult(status="approved")
-        else:
+        if action != "accept":
             return ApprovalResult(status="rejected", reason=f"User action: {action}")
+
+        # action == "accept": honor an explicit approve=False from the form;
+        # clients that render no field send none, so accept itself means approval.
+        approve = True
+        if isinstance(content, dict) and "approve" in content:
+            approve = bool(content["approve"])
+        if not approve:
+            return ApprovalResult(status="rejected", reason="User declined approval")
+        return ApprovalResult(status="approved")
 
     async def check_approval(self, approval_id: str) -> ApprovalResult:
         """Check status of an existing approval.

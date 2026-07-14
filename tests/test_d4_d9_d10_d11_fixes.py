@@ -375,7 +375,7 @@ class TestApprovalArgumentsJsonSerialization:
         # Capture the message passed to the elicit callback
         captured_messages: list[str] = []
 
-        async def fake_elicit(message: str) -> dict:
+        async def fake_elicit(message: str, schema: object = None) -> dict:
             captured_messages.append(message)
             return {"action": "accept"}
 
