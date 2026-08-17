@@ -9,22 +9,10 @@ inputs are rejected.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
-
 from apcore_mcp.acl_builder import build_acl_from_config
 
-_FIXTURE_PATH = Path(__file__).resolve().parents[2] / "apcore-mcp" / "conformance" / "fixtures" / "acl_config.json"
-
-
-def _load_fixture() -> dict:
-    if not _FIXTURE_PATH.is_file():
-        pytest.skip(f"conformance fixture not found at {_FIXTURE_PATH}", allow_module_level=True)
-    with _FIXTURE_PATH.open() as fh:
-        return json.load(fh)
-
+from tests.conformance_fixtures import load_fixture
 
 # ---------------------------------------------------------------------------
 # Success cases
@@ -33,7 +21,7 @@ def _load_fixture() -> dict:
 
 @pytest.mark.parametrize(
     "case",
-    _load_fixture()["test_cases"],
+    load_fixture("acl_config.json")["test_cases"],
     ids=lambda c: c["id"],
 )
 def test_conformance_success_case(case: dict):
@@ -64,7 +52,7 @@ def test_conformance_success_case(case: dict):
 
 @pytest.mark.parametrize(
     "case",
-    _load_fixture()["error_cases"],
+    load_fixture("acl_config.json")["error_cases"],
     ids=lambda c: c["id"],
 )
 def test_conformance_error_case(case: dict):

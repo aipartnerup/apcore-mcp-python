@@ -9,32 +9,16 @@ inputs are rejected.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
-
 from apcore_mcp.middleware_builder import build_middleware_from_config
+
+from tests.conformance_fixtures import load_fixture
 
 # ---------------------------------------------------------------------------
 # Fixture loader
 # ---------------------------------------------------------------------------
 
 
-_FIXTURE_PATH = (
-    Path(__file__).resolve().parents[2] / "apcore-mcp" / "conformance" / "fixtures" / "middleware_config.json"
-)
-
-
-def _load_fixture() -> dict:
-    if not _FIXTURE_PATH.is_file():
-        pytest.skip(
-            f"conformance fixture not found at {_FIXTURE_PATH} — "
-            "is the apcore-mcp monorepo checked out alongside apcore-mcp-python?",
-            allow_module_level=True,
-        )
-    with _FIXTURE_PATH.open() as fh:
-        return json.load(fh)
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +52,7 @@ def _labels(instances: list[object]) -> list[str]:
 
 @pytest.mark.parametrize(
     "case",
-    _load_fixture()["test_cases"],
+    load_fixture("middleware_config.json")["test_cases"],
     ids=lambda c: c["id"],
 )
 def test_conformance_success_case(case: dict):
@@ -85,7 +69,7 @@ def test_conformance_success_case(case: dict):
 
 @pytest.mark.parametrize(
     "case",
-    _load_fixture()["error_cases"],
+    load_fixture("middleware_config.json")["error_cases"],
     ids=lambda c: c["id"],
 )
 def test_conformance_error_case(case: dict):
