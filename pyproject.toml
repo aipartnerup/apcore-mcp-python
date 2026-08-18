@@ -26,13 +26,21 @@ classifiers = [
 ]
 dependencies = [
     "apcore>=0.27.0",
-    "apcore-toolkit>=0.10.0",
     "mcp>=1.26,<2.0",
     "mcp-embedded-ui>=0.4.0",
     "PyJWT>=2.0",
 ]
 
 [project.optional-dependencies]
+
+# apcore-toolkit powers Markdown tool descriptions (rich_description=True) and
+# the csv/jsonl output formatters. Every import of it in src/ is lazy and every
+# call site degrades gracefully when it is absent, so it is an extra rather than
+# a runtime dependency — this is the extra the "install 'apcore-mcp[markdown]'"
+# WARN logs point at.
+markdown = [
+    "apcore-toolkit>=0.10.0",
+]
 
 dev = [
     "pytest>=7.0",
@@ -41,6 +49,7 @@ dev = [
     "mypy>=1.0",
     "ruff>=0.1",
     "apdev[dev]>=0.2.3",
+    "apcore-toolkit>=0.10.0",
 ]
 
 [project.scripts]

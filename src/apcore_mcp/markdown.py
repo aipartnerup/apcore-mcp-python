@@ -127,8 +127,7 @@ def render_module_markdown(descriptor: Any, *, display: bool = True) -> str | No
         from apcore_toolkit import format_module
     except ImportError:
         logger.warning(
-            "apcore-toolkit is not installed; install 'apcore-mcp[markdown]' to "
-            "render Markdown module descriptions"
+            "apcore-toolkit is not installed; install 'apcore-mcp[markdown]' to render Markdown module descriptions"
         )
         return None
 

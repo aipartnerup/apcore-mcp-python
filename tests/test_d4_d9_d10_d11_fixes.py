@@ -275,27 +275,38 @@ class TestMCPDefaultsWiredIntoServe:
 class TestApcoreToolkitOptionalDep:
     """D9-006 — apcore-toolkit must not be a mandatory runtime dependency."""
 
-    def test_apcore_toolkit_not_in_runtime_deps(self) -> None:
-        """pyproject.toml must not list apcore-toolkit under [project.dependencies]."""
+    @staticmethod
+    def _pyproject() -> dict:
+        """Parse pyproject.toml properly.
+
+        [B-PY-14] The previous version scanned for a literal
+        "[project.dependencies]" section header. No such section exists — the
+        dependencies live in a `dependencies = [...]` array inside `[project]` —
+        so the loop body never ran and the assertion never executed while
+        apcore-toolkit sat in the hard runtime dependency list.
+        """
+        import tomllib
+
         pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
-        content = pyproject_path.read_text()
+        return tomllib.loads(pyproject_path.read_text())
 
-        # Parse the dependencies section — look for apcore-toolkit in the
-        # [project.dependencies] section (before the first optional-deps section)
-        lines = content.splitlines()
-        in_deps = False
-        for line in lines:
-            stripped = line.strip()
-            if stripped == "[project.dependencies]":
-                in_deps = True
-            elif stripped.startswith("[project.optional-dependencies") or stripped.startswith("[") and in_deps:
-                in_deps = False
+    def test_apcore_toolkit_not_in_runtime_deps(self) -> None:
+        """pyproject.toml must not list apcore-toolkit as a hard runtime dependency."""
+        deps = self._pyproject()["project"]["dependencies"]
 
-            if in_deps and "apcore-toolkit" in stripped:
-                pytest.fail(
-                    "apcore-toolkit must NOT be in [project.dependencies]. "
-                    "It is never imported at runtime — move it to [project.optional-dependencies]."
-                )
+        offenders = [d for d in deps if "apcore-toolkit" in d]
+        assert offenders == [], (
+            f"apcore-toolkit must NOT be a runtime dependency (found {offenders}). "
+            "Every import of it in src/ is lazy and every call site degrades when it "
+            "is absent — it belongs in the [markdown] extra."
+        )
+
+    def test_apcore_toolkit_is_declared_in_the_markdown_extra(self) -> None:
+        """The extra the 'install apcore-mcp[markdown]' WARN logs point at must exist."""
+        extras = self._pyproject()["project"]["optional-dependencies"]
+
+        assert "markdown" in extras, "the [markdown] extra referenced by the WARN logs is missing"
+        assert any("apcore-toolkit" in d for d in extras["markdown"])
 
     def test_apcore_toolkit_not_imported_at_module_level(self) -> None:
         """Importing apcore_mcp must not require apcore_toolkit."""
