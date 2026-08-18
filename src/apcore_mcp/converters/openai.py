@@ -170,14 +170,9 @@ class OpenAIConverter:
         base = descriptor.description or ""
         if rich_description:
             if _markdown.is_available():
-                try:
-                    base = _markdown.render_module_markdown(descriptor)
-                except Exception:
-                    _logger.warning(
-                        "rich_description: format_module failed for %s; " "falling back to plain description",
-                        descriptor.module_id,
-                        exc_info=True,
-                    )
+                # render_module_markdown never raises; it returns None when the
+                # toolkit is unavailable or could not produce a string. [A-D-MD-3]
+                base = _markdown.render_module_markdown(descriptor) or base
             elif not self._warned_toolkit_missing:
                 self._warned_toolkit_missing = True
                 _logger.warning(

@@ -189,15 +189,9 @@ class MCPServerFactory:
         if mcp_display.get("description"):
             description = mcp_display["description"]
         elif self._rich_description and _markdown.is_available():
-            try:
-                description = _markdown.render_module_markdown(descriptor)
-            except Exception:
-                logger.warning(
-                    "rich_description: format_module failed for %s; " "falling back to plain description",
-                    descriptor.module_id,
-                    exc_info=True,
-                )
-                description = descriptor.description
+            # render_module_markdown never raises; it returns None when the
+            # toolkit is unavailable or could not produce a string. [A-D-MD-3]
+            description = _markdown.render_module_markdown(descriptor) or descriptor.description
         else:
             if self._rich_description and not _markdown.is_available() and not self._warned_toolkit_missing:
                 self._warned_toolkit_missing = True

@@ -16,8 +16,12 @@ invoking :func:`render_module_markdown`.
 
 from __future__ import annotations
 
+import functools
+import logging
 from dataclasses import fields, is_dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "is_available",
@@ -26,11 +30,21 @@ __all__ = [
 ]
 
 
+@functools.lru_cache(maxsize=1)
 def is_available() -> bool:
-    """Return True when apcore-toolkit is installed and importable."""
-    import importlib.util
+    """Return True when apcore-toolkit is installed and its renderer is usable.
 
-    return importlib.util.find_spec("apcore_toolkit") is not None
+    [A-D-MD-5] The result is cached after the first resolution — this runs on
+    every descriptor conversion, and re-running ``find_spec`` per call is pure
+    overhead. Probing ``format_module`` rather than the bare package spec also
+    means a broken or partial install reports False instead of True, matching
+    the callable check in markdown.ts:46.
+    """
+    try:
+        from apcore_toolkit import format_module
+    except ImportError:
+        return False
+    return callable(format_module)
 
 
 def descriptor_to_scanned_module(descriptor: Any) -> Any:
@@ -40,10 +54,17 @@ def descriptor_to_scanned_module(descriptor: Any) -> Any:
     the overlapping fields and supplies sensible defaults (empty
     ``target``, no ``documentation``) for the toolkit-only ones.
 
-    Raises ``ImportError`` when apcore-toolkit is not installed.
+    Raises ``ImportError`` when apcore-toolkit is not installed. Callers that
+    need the never-raises contract should go through
+    :func:`render_module_markdown`.
     """
     from apcore_toolkit import ScannedModule
 
+    # [A-D-MD-8] The TypeScript and Rust adapters hardcode an empty target
+    # because their descriptors carry none. Python has a real one and keeps it:
+    # `target` takes no part in `format_module(style="markdown")`, so the
+    # rendered bytes stay identical across SDKs while this public helper still
+    # returns a faithful ScannedModule.
     target = getattr(descriptor, "target", "") or ""
     documentation = getattr(descriptor, "documentation", None)
     examples = list(getattr(descriptor, "examples", None) or [])
@@ -69,6 +90,12 @@ def descriptor_to_scanned_module(descriptor: Any) -> Any:
         "examples": examples,
         "metadata": metadata,
         "display": display,
+        # [A-D-MD-8] Both fields are set by the TypeScript adapter
+        # (markdown.ts:107, :111) and the Rust one (markdown.rs:40, :50). Without
+        # them, a toolkit whose ScannedModule declares `warnings` with no default
+        # raises TypeError from the constructor below.
+        "suggested_alias": None,
+        "warnings": [],
     }
     if is_dataclass(ScannedModule):
         accepted = {f.name for f in fields(ScannedModule)}
@@ -76,7 +103,7 @@ def descriptor_to_scanned_module(descriptor: Any) -> Any:
     return ScannedModule(**candidate_kwargs)
 
 
-def render_module_markdown(descriptor: Any, *, display: bool = True) -> str:
+def render_module_markdown(descriptor: Any, *, display: bool = True) -> str | None:
     """Render a :class:`ModuleDescriptor` as canonical apcore-toolkit markdown.
 
     Returns the markdown body produced by
@@ -89,16 +116,32 @@ def render_module_markdown(descriptor: Any, *, display: bool = True) -> str:
         descriptor: An apcore ``ModuleDescriptor`` (duck-typed).
         display: Honour the ``display`` overlay when present (default True).
 
-    Raises:
-        ImportError: when apcore-toolkit is not installed (install via
-            ``pip install 'apcore-mcp[markdown]'``).
+    Returns:
+        The rendered markdown, or ``None`` when apcore-toolkit is unavailable
+        (install via ``pip install 'apcore-mcp[markdown]'``) or the toolkit
+        could not produce a string. [A-D-MD-3] This never raises, so the
+        spec-sanctioned ``render_module_markdown(d) or d.description`` works.
+        TypeScript returns ``string | null`` (markdown.ts:136).
     """
-    from apcore_toolkit import format_module
+    try:
+        from apcore_toolkit import format_module
+    except ImportError:
+        logger.warning(
+            "apcore-toolkit is not installed; install 'apcore-mcp[markdown]' to "
+            "render Markdown module descriptions"
+        )
+        return None
 
-    scanned = descriptor_to_scanned_module(descriptor)
-    rendered = format_module(scanned, style="markdown", display=display)
+    try:
+        scanned = descriptor_to_scanned_module(descriptor)
+        rendered = format_module(scanned, style="markdown", display=display)
+    except Exception:
+        logger.warning("format_module failed for %s", getattr(descriptor, "module_id", "?"), exc_info=True)
+        return None
+
     if isinstance(rendered, str):
         return rendered
     # `format_module(style="json")` returns a dict; `markdown` returns
     # str. Defensive guard against future style additions.
-    raise TypeError(f"format_module(style='markdown') returned {type(rendered).__name__}")
+    logger.warning("format_module(style='markdown') returned %s", type(rendered).__name__)
+    return None
