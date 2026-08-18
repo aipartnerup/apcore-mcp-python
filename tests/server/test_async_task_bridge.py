@@ -15,7 +15,6 @@ from typing import Any
 import pytest
 from apcore.async_task import AsyncTaskManager, TaskStatus
 from apcore.errors import TaskLimitExceededError
-
 from apcore_mcp.server.async_task_bridge import META_TOOL_NAMES, AsyncTaskBridge
 from apcore_mcp.server.factory import MCPServerFactory
 
@@ -397,7 +396,6 @@ async def test_preview_meta_tool_rejects_non_object_arguments() -> None:
 
 def test_error_mapper_handles_circuit_breaker_open() -> None:
     from apcore.errors import CircuitBreakerOpenError
-
     from apcore_mcp.adapters.errors import ErrorMapper
 
     err = CircuitBreakerOpenError("demo.module")

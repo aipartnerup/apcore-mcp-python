@@ -6,7 +6,6 @@ import inspect
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from apcore_mcp.server.transport import TransportManager
 
 # ---------------------------------------------------------------------------

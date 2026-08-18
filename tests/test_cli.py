@@ -7,7 +7,6 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from apcore_mcp.__main__ import main
 
 # ---------------------------------------------------------------------------

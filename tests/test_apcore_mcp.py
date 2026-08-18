@@ -7,7 +7,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from apcore_mcp.apcore_mcp import APCoreMCP
 
 # ---------------------------------------------------------------------------

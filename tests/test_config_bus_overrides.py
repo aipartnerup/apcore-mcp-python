@@ -11,9 +11,8 @@ from __future__ import annotations
 from typing import Any, cast
 from unittest.mock import patch
 
-import pytest
-
 import apcore_mcp
+import pytest
 
 
 class _FakeRegistry:

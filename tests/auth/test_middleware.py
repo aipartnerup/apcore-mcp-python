@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock
 import jwt as pyjwt
 import pytest
 from apcore import Identity
-
 from apcore_mcp.auth.jwt import JWTAuthenticator
 from apcore_mcp.auth.middleware import (
     AuthMiddleware,

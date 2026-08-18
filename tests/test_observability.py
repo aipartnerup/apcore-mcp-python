@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
 from apcore_mcp import APCoreMCP
 from apcore_mcp.explorer import create_usage_routes
 

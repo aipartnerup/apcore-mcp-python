@@ -10,9 +10,8 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
-import pytest
-
 import apcore_mcp
+import pytest
 from apcore_mcp.adapters.errors import ErrorMapper
 from apcore_mcp.server.router import ExecutionRouter
 from apcore_mcp.server.transport import TransportManager

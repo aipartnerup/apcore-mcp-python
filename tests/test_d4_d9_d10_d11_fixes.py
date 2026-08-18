@@ -171,7 +171,10 @@ class TestApCoreEventsExported:
     def test_apcore_events_importable(self) -> None:
         from apcore_mcp import APCORE_EVENTS
 
-        assert APCORE_EVENTS == {
+        # noqa justification: SIM300 wants `{...} == APCORE_EVENTS`, which is
+        # the Yoda condition the rule exists to remove. The rule misreads a
+        # dict literal on the right as the constant side of a comparison.
+        assert APCORE_EVENTS == {  # noqa: SIM300
             "MODULE_TOGGLED": "apcore.module.toggled",
             "MODULE_RELOADED": "apcore.module.reloaded",
             "CONFIG_UPDATED": "apcore.config.updated",

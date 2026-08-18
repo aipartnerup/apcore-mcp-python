@@ -6,7 +6,6 @@ import json
 from unittest.mock import AsyncMock
 
 import pytest
-
 from apcore_mcp.server.router import ExecutionRouter
 
 
