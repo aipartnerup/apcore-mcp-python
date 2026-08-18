@@ -5,9 +5,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from apcore_mcp import async_serve
 from starlette.applications import Starlette
 
+from apcore_mcp import async_serve
 from tests.conftest import ModuleAnnotations, ModuleDescriptor
 
 # ---------------------------------------------------------------------------

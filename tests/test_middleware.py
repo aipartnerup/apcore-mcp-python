@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from apcore_mcp._utils import resolve_executor
 from apcore_mcp.middleware_builder import build_middleware_from_config
 
@@ -156,6 +157,7 @@ def test_middleware_on_executor_without_use_raises():
 def test_apcore_mcp_reads_config_bus_middleware():
     """APCoreMCP should load middleware from Config Bus `mcp.middleware`."""
     from apcore import Registry, RetryMiddleware
+
     from apcore_mcp.apcore_mcp import APCoreMCP
 
     registry = Registry()
@@ -182,6 +184,7 @@ def test_apcore_mcp_merges_config_and_constructor_middleware():
     """
     from apcore import Registry, RetryMiddleware
     from apcore.observability.context_logger import ObsLoggingMiddleware
+
     from apcore_mcp.apcore_mcp import APCoreMCP
 
     registry = Registry()
@@ -202,6 +205,7 @@ def test_apcore_mcp_merges_config_and_constructor_middleware():
 def test_apcore_mcp_no_config_bus_still_works():
     """If Config.load() returns None, constructor still accepts middleware."""
     from apcore import Registry, RetryMiddleware
+
     from apcore_mcp.apcore_mcp import APCoreMCP
 
     registry = Registry()

@@ -11,10 +11,10 @@ TC-E2E-003) are skipped because they need real apcore modules.
 from __future__ import annotations
 
 import pytest
-from apcore_mcp import to_openai_tools
-from apcore_mcp.server.factory import MCPServerFactory
 from mcp import types as mcp_types
 
+from apcore_mcp import to_openai_tools
+from apcore_mcp.server.factory import MCPServerFactory
 from tests.conftest import ModuleAnnotations, ModuleDescriptor
 
 # ---------------------------------------------------------------------------

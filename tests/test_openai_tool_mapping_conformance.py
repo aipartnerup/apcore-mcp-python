@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 from apcore import ModuleAnnotations, ModuleDescriptor
-from apcore_mcp.converters.openai import OpenAIConverter
 
+from apcore_mcp.converters.openai import OpenAIConverter
 from tests.conformance_fixtures import load_fixture
 
 _FIXTURE = load_fixture("openai_tool_mapping.json")
@@ -49,24 +49,22 @@ def test_conformance_module_to_openai_function(case: dict):
     if "expected_property_description" in case:
         spec = case["expected_property_description"]
         got = properties.get(spec["property"], {}).get("description")
-        assert got == spec["value"], (
-            f"{case['id']}: {spec['property']}.description — got {got!r}, expected {spec['value']!r}"
-        )
+        assert (
+            got == spec["value"]
+        ), f"{case['id']}: {spec['property']}.description — got {got!r}, expected {spec['value']!r}"
 
     if "expected_absent_property_keys" in case:
         target = case.get("expected_property_of")
         scoped = {target: properties.get(target, {})} if target else properties
         for prop_name, prop_schema in scoped.items():
             for forbidden in case["expected_absent_property_keys"]:
-                assert forbidden not in prop_schema, (
-                    f"{case['id']}: property {prop_name} still carries {forbidden!r}"
-                )
+                assert forbidden not in prop_schema, f"{case['id']}: property {prop_name} still carries {forbidden!r}"
 
     for needle in case.get("expected_description_contains", []):
-        assert needle in function["description"], (
-            f"{case['id']}: description missing {needle!r} — got {function['description']!r}"
-        )
+        assert (
+            needle in function["description"]
+        ), f"{case['id']}: description missing {needle!r} — got {function['description']!r}"
     for needle in case.get("expected_description_not_contains", []):
-        assert needle not in function["description"], (
-            f"{case['id']}: description leaked {needle!r} — got {function['description']!r}"
-        )
+        assert (
+            needle not in function["description"]
+        ), f"{case['id']}: description leaked {needle!r} — got {function['description']!r}"

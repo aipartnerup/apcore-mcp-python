@@ -6,8 +6,8 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from apcore_mcp import serve
 
+from apcore_mcp import serve
 from tests.conftest import ModuleAnnotations, ModuleDescriptor
 
 # ---------------------------------------------------------------------------

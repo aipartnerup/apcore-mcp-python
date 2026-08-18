@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 import pytest
+
 from apcore_mcp.adapters.id_normalizer import ModuleIDNormalizer
 
 

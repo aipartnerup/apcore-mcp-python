@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 import pytest
+
 from apcore_mcp.server.router import ExecutionRouter
 
 

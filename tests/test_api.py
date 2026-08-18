@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import apcore_mcp
 import pytest
+
+import apcore_mcp
 from apcore_mcp import serve, to_openai_tools
 from apcore_mcp._utils import resolve_executor, resolve_registry
-
 from tests.conftest import ModuleAnnotations, ModuleDescriptor
 
 # ---------------------------------------------------------------------------

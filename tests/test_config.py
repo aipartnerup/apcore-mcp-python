@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from apcore.config import Config
+
 from apcore_mcp.config import MCP_DEFAULTS, MCP_ENV_PREFIX, MCP_NAMESPACE, register_mcp_namespace
 
 

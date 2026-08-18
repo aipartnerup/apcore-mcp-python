@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import pytest
 from apcore import ModuleAnnotations, ModuleDescriptor
-from apcore_mcp.server.factory import MCPServerFactory
 
+from apcore_mcp.server.factory import MCPServerFactory
 from tests.conformance_fixtures import load_fixture
 
 _FIXTURE = load_fixture("tool_mapping.json")
@@ -47,6 +47,6 @@ def test_conformance_module_to_mcp_tool(case: dict):
 
     got_annotations = tool.annotations.model_dump(exclude_none=True) if tool.annotations else {}
     for key, value in expected["annotations"].items():
-        assert got_annotations.get(key) == value, (
-            f"{case['id']}: annotation {key} — got {got_annotations.get(key)!r}, expected {value!r}"
-        )
+        assert (
+            got_annotations.get(key) == value
+        ), f"{case['id']}: annotation {key} — got {got_annotations.get(key)!r}, expected {value!r}"

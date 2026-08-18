@@ -10,8 +10,8 @@ inputs are rejected.
 from __future__ import annotations
 
 import pytest
-from apcore_mcp.acl_builder import build_acl_from_config
 
+from apcore_mcp.acl_builder import build_acl_from_config
 from tests.conformance_fixtures import load_fixture
 
 # ---------------------------------------------------------------------------

@@ -14,8 +14,8 @@ with the module's output schema, and does not post-process the result.
 from __future__ import annotations
 
 import pytest
-from apcore_mcp.server.router import ExecutionRouter
 
+from apcore_mcp.server.router import ExecutionRouter
 from tests.conformance_fixtures import load_fixture
 
 _FIXTURE = load_fixture("output_redaction.json")

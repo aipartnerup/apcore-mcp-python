@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from apcore_mcp._utils import resolve_executor
 from apcore_mcp.acl_builder import build_acl_from_config
 
@@ -163,6 +164,7 @@ def test_resolve_executor_errors_when_executor_has_no_set_acl():
 
 def test_apcore_mcp_reads_acl_from_config_bus():
     from apcore import ACL, Registry
+
     from apcore_mcp.apcore_mcp import APCoreMCP
 
     registry = Registry()
@@ -192,6 +194,7 @@ def test_apcore_mcp_reads_acl_from_config_bus():
 
 def test_apcore_mcp_caller_acl_overrides_config_bus():
     from apcore import ACL, ACLRule, Registry
+
     from apcore_mcp.apcore_mcp import APCoreMCP
 
     registry = Registry()

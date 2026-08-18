@@ -8,11 +8,12 @@ from unittest.mock import AsyncMock
 
 import jwt as pyjwt
 import pytest
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
+
 from apcore_mcp.auth.jwt import JWTAuthenticator
 from apcore_mcp.auth.middleware import auth_identity_var
 from apcore_mcp.explorer import create_explorer_mount
-from starlette.applications import Starlette
-from starlette.testclient import TestClient
 
 # ---------------------------------------------------------------------------
 # Mock MCP Tool objects

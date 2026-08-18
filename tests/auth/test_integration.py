@@ -14,14 +14,15 @@ from unittest.mock import AsyncMock
 import jwt as pyjwt
 import pytest
 from apcore import Executor, Identity, Registry
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.testclient import TestClient
+
 from apcore_mcp.auth.jwt import JWTAuthenticator
 from apcore_mcp.auth.middleware import AuthMiddleware, auth_identity_var
 from apcore_mcp.explorer import create_explorer_mount
 from apcore_mcp.server.factory import MCPServerFactory
 from apcore_mcp.server.router import ExecutionRouter
-from starlette.applications import Starlette
-from starlette.middleware import Middleware
-from starlette.testclient import TestClient
 
 SECRET = "integration-test-secret-32bytes!"
 EXTENSIONS_DIR = "./examples/extensions"
