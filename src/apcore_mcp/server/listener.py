@@ -74,11 +74,18 @@ class RegistryListener:
         """
         if not self._active:
             return
-        descriptor = self._registry.get_definition(module_id)
-        if descriptor is None:
-            logger.warning("Definition not found for registered module: %s", module_id)
-            return
         try:
+            # [A-D-RL-3] get_definition must stay inside the containment block:
+            # this callback runs on the registry's synchronous event dispatcher,
+            # so a raising registry would propagate into — and potentially abort
+            # — the registry.register() call that fired the event. Contract:
+            # no exceptions raised; all failures are logged and swallowed.
+            # TypeScript places the same call inside its try (listener.ts:89)
+            # and Rust matches on the Result (listener.rs:79).
+            descriptor = self._registry.get_definition(module_id)
+            if descriptor is None:
+                logger.warning("Definition not found for registered module: %s", module_id)
+                return
             tool = self._factory.build_tool(descriptor)
             with self._lock:
                 self._tools[module_id] = tool

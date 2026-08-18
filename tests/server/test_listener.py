@@ -187,6 +187,31 @@ class TestOnRegister:
         assert listener.tools == {}
         assert "Failed to build tool for bad.module" in caplog.text
 
+    def test_on_register_swallows_a_raising_get_definition(
+        self,
+        listener: RegistryListener,
+        registry: StubRegistry,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """[A-D-RL-3] A raising registry.get_definition must not escape the callback.
+
+        The callback runs on the registry's synchronous event dispatcher, so an
+        exception here propagates into the registry.register() call that fired
+        the event. Contract: no exceptions raised, all failures logged.
+        """
+
+        def boom(module_id: str) -> ModuleDescriptor | None:
+            raise RuntimeError("registry unavailable")
+
+        registry.get_definition = boom  # type: ignore[method-assign]
+        listener.start()
+
+        with caplog.at_level(logging.WARNING):
+            registry.trigger("register", "some.module")
+
+        assert listener.tools == {}
+        assert "Failed to build tool for some.module" in caplog.text
+
 
 class TestOnUnregister:
     """Tests for _on_unregister callback behavior."""
