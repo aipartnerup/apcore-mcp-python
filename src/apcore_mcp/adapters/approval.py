@@ -111,6 +111,22 @@ class ElicitationApprovalHandler(ApprovalHandler):
         return ApprovalResult(status="rejected", reason="Phase B not supported via MCP elicitation")
 
 
+def _store_failure_reason(exc: BaseException) -> str:
+    """Classify an ApprovalStore failure into a contract reason string.
+
+    The approval gate fails closed: a store that is momentarily unreachable
+    must produce a rejected result, never an exception escaping the handler.
+    ``ApprovalStore`` is a bare Protocol with no declared error hierarchy, so a
+    capacity rejection can only be recognised by ``MemoryError`` or by the
+    exception naming it — anything else is reported as a generic storage error.
+    """
+    if isinstance(exc, MemoryError):
+        return "Store capacity exceeded"
+    if "capacity" in f"{type(exc).__name__} {exc}".lower():
+        return "Store capacity exceeded"
+    return "Storage error"
+
+
 class StorageBackedApprovalHandler(ApprovalHandler):
     """Phase B approval handler backed by a pluggable ApprovalStore.
 
@@ -125,6 +141,10 @@ class StorageBackedApprovalHandler(ApprovalHandler):
 
     ``notify_callback`` (optional) lets callers fan out to Slack/email/etc.
     Signature: ``async (approval_id: str, module_id: str, arguments: dict) -> None``
+
+    Neither method raises: a store failure on either path is contained and
+    surfaced as ``ApprovalResult(status="rejected", ...)`` so the gate fails
+    closed rather than propagating out of apcore's approval call.
     """
 
     def __init__(
@@ -141,7 +161,12 @@ class StorageBackedApprovalHandler(ApprovalHandler):
         module_id = getattr(request, "module_id", "unknown")
         arguments = getattr(request, "arguments", {}) or {}
 
-        await self._store.save_pending(approval_id, module_id, arguments)
+        try:
+            await self._store.save_pending(approval_id, module_id, arguments)
+        except Exception as exc:
+            reason = _store_failure_reason(exc)
+            logger.error("approval store save_pending failed for %s: %s", approval_id, reason, exc_info=True)
+            return ApprovalResult(status="rejected", reason=reason)
 
         if self._notify is not None:
             try:
@@ -152,7 +177,12 @@ class StorageBackedApprovalHandler(ApprovalHandler):
         return ApprovalResult(status="pending", approval_id=approval_id)
 
     async def check_approval(self, approval_id: str) -> ApprovalResult:
-        record = await self._store.get_result(approval_id)
+        try:
+            record = await self._store.get_result(approval_id)
+        except Exception as exc:
+            reason = _store_failure_reason(exc)
+            logger.error("approval store get_result failed for %s: %s", approval_id, reason, exc_info=True)
+            return ApprovalResult(status="rejected", reason=reason)
         if record is None:
             return ApprovalResult(status="rejected", reason="approval_id not found")
         status = record.get("status", "pending")

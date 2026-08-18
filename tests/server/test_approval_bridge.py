@@ -232,6 +232,73 @@ async def test_request_approval_swallows_notify_exception() -> None:
 
 
 # ---------------------------------------------------------------------------
+# [A-D-AP-3] StorageBackedApprovalHandler: store failures are contained
+# ---------------------------------------------------------------------------
+
+
+class _FailingStore:
+    """ApprovalStore stand-in whose every operation raises."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    async def save_pending(self, approval_id: str, module_id: str, arguments: dict) -> None:
+        raise self._exc
+
+    async def get_result(self, approval_id: str) -> dict[str, Any] | None:
+        raise self._exc
+
+    async def resolve(self, approval_id: str, *, approved: bool, reason: str | None = None) -> bool:
+        raise self._exc
+
+
+def _make_approval_request() -> Any:
+    from apcore import Context
+    from apcore.approval import ApprovalRequest
+    from apcore.module import ModuleAnnotations
+
+    return ApprovalRequest(
+        module_id="mod",
+        arguments={},
+        context=Context.create(data={}),
+        annotations=ModuleAnnotations(),
+        description="x",
+    )
+
+
+@pytest.mark.asyncio
+async def test_request_approval_returns_rejected_when_save_pending_raises() -> None:
+    """A store that cannot persist must fail the gate closed, not raise."""
+    handler = StorageBackedApprovalHandler(_FailingStore(RuntimeError("redis down")))
+
+    result = await handler.request_approval(_make_approval_request())
+
+    assert result.status == "rejected"
+    assert result.reason == "Storage error"
+
+
+@pytest.mark.asyncio
+async def test_check_approval_returns_rejected_when_get_result_raises() -> None:
+    """A store that cannot be read must fail the gate closed, not raise."""
+    handler = StorageBackedApprovalHandler(_FailingStore(RuntimeError("redis down")))
+
+    result = await handler.check_approval("apr-1")
+
+    assert result.status == "rejected"
+    assert result.reason == "Storage error"
+
+
+@pytest.mark.asyncio
+async def test_capacity_failures_report_the_capacity_reason() -> None:
+    """A capacity rejection is reported distinctly from a generic storage error."""
+    handler = StorageBackedApprovalHandler(_FailingStore(MemoryError()))
+    named = StorageBackedApprovalHandler(_FailingStore(RuntimeError("store capacity exceeded")))
+
+    assert (await handler.request_approval(_make_approval_request())).reason == "Store capacity exceeded"
+    assert (await named.check_approval("apr-1")).reason == "Store capacity exceeded"
+
+
+# ---------------------------------------------------------------------------
 # APCoreMCP integration: approval_store param auto-wires handler
 # ---------------------------------------------------------------------------
 

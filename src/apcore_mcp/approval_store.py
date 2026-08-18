@@ -115,7 +115,7 @@ class InMemoryApprovalStore:
         self._schedule_cleanup(approval_id, self._pending_ttl)
 
     async def get_result(self, approval_id: str) -> dict[str, Any] | None:
-        return self._records.get(approval_id)
+        return self._project(self._records.get(approval_id))
 
     async def resolve(self, approval_id: str, *, approved: bool, reason: str | None = None) -> bool:
         record = self._records.get(approval_id)
@@ -139,10 +139,31 @@ class InMemoryApprovalStore:
         """Block until resolved or timeout. Helper for tests."""
         event = self._events.get(approval_id)
         if event is None:
-            return self._records.get(approval_id)
+            return self._project(self._records.get(approval_id))
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(asyncio.shield(event.wait()), timeout=timeout)
-        return self._records.get(approval_id)
+        return self._project(self._records.get(approval_id))
+
+    # ── read projection ──────────────────────────────────────────────────
+
+    # Fields a reader is allowed to see. ``arguments`` is deliberately absent:
+    # while a record is pending it still holds the module's raw inputs, and the
+    # Phase B contract states they are not part of the returned record so
+    # sensitive inputs are never handed back to a poller. Mirrors the fresh
+    # projections built in approval-store.ts:109-115 and approval_store.rs:197-201.
+    _PROJECTED_FIELDS = ("status", "module_id", "reason", "created_at", "resolved_at")
+
+    @classmethod
+    def _project(cls, record: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Return a detached copy of ``record`` without the stored arguments.
+
+        Returning the live dict would also hand the caller a mutable alias to
+        store state, letting external code flip ``status`` and bypass the
+        resolve() idempotency guard.
+        """
+        if record is None:
+            return None
+        return {field: record[field] for field in cls._PROJECTED_FIELDS if field in record}
 
     # ── cleanup internals ────────────────────────────────────────────────
 

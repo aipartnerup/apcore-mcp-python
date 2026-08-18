@@ -30,8 +30,54 @@ async def test_save_and_get_pending() -> None:
     assert record is not None
     assert record["status"] == "pending"
     assert record["module_id"] == "my_module"
-    assert record["arguments"] == {"x": 1}
     assert record["reason"] is None
+    # [A-D-AP-6] arguments are never part of the returned record, not even while
+    # pending — the Phase B contract keeps sensitive module inputs inside the store.
+    assert "arguments" not in record
+
+
+@pytest.mark.asyncio
+async def test_get_result_omits_arguments_while_pending() -> None:
+    """[A-D-AP-6] A pending record must not leak the module's raw arguments."""
+    store = InMemoryApprovalStore()
+    await store.save_pending("aid-proj", "my_module", {"password": "hunter2"})
+
+    record = await store.get_result("aid-proj")
+
+    assert record is not None
+    assert record["status"] == "pending"
+    assert "arguments" not in record
+    assert "hunter2" not in repr(record)
+
+
+@pytest.mark.asyncio
+async def test_get_result_returns_detached_copy() -> None:
+    """[A-D-AP-6] Mutating the returned record must not reach into store state."""
+    store = InMemoryApprovalStore()
+    await store.save_pending("aid-detach", "mod", {"x": 1})
+
+    first = await store.get_result("aid-detach")
+    assert first is not None
+    first["status"] = "approved"
+
+    # The store still considers the record pending, so resolve() still succeeds
+    # and its idempotency guard has not been bypassed.
+    assert await store.resolve("aid-detach", approved=True) is True
+    second = await store.get_result("aid-detach")
+    assert second is not None
+    assert second["status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_resolution_omits_arguments() -> None:
+    """[A-D-AP-6] The wait helper reads through the same projection."""
+    store = InMemoryApprovalStore()
+    await store.save_pending("aid-wait-proj", "mod", {"secret": "s3cr3t"})
+
+    record = await store.wait_for_resolution("aid-wait-proj", timeout=0.01)
+
+    assert record is not None
+    assert "arguments" not in record
 
 
 @pytest.mark.asyncio
