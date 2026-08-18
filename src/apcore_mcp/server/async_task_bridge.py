@@ -410,9 +410,16 @@ class AsyncTaskBridge:
                     },
                     is_error=True,
                 )
-        raw_args = args.get("arguments") or {}
-        if not isinstance(raw_args, dict):
+        # [A-D-AT-4] Read first, type-check second. `or {}` short-circuits on
+        # falsiness, so `arguments: []`, "", 0 and false were silently replaced
+        # with {} and submitted a task with empty inputs — only truthy non-dicts
+        # ever reached the error path. TypeScript (async-task-bridge.ts:500) and
+        # Rust (async_task_bridge.rs:607) reject every non-object, non-null
+        # value, as does the preview handler below.
+        raw_args = args.get("arguments")
+        if raw_args is not None and not isinstance(raw_args, dict):
             return self._error_response(ValueError("arguments must be an object"))
+        raw_args = raw_args or {}
         context = self._build_context(extra)
         envelope = await self.submit(
             module_id,

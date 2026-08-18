@@ -405,3 +405,55 @@ def test_error_mapper_handles_circuit_breaker_open() -> None:
     # The guidance comes from CircuitBreakerOpenError's default ai_guidance
     # (per-module recovery hint) which the mapper mirrors onto aiGuidance.
     assert "demo.module" in mapped["aiGuidance"]
+
+
+# ---------------------------------------------------------------------------
+# [A-D-AT-4] __apcore_task_submit rejects every non-object `arguments`
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [[], "", 0, False, [1, 2], "text", 42, True])
+async def test_submit_tool_rejects_non_object_arguments(bad: object) -> None:
+    """Falsy non-objects used to be coerced to {} and submitted with empty inputs.
+
+    TypeScript (async-task-bridge.ts:500) and Rust (async_task_bridge.rs:607)
+    reject every non-object, non-null value; so does Python's own preview
+    handler. Only the submit branch short-circuited with `or {}`.
+    """
+    executor = _SlowExecutor()
+    bridge = AsyncTaskBridge(AsyncTaskManager(executor))
+    async_desc = _Descriptor(module_id="m", metadata={"async": True})
+
+    content, is_error, _ = await bridge.handle_meta_tool(
+        "__apcore_task_submit",
+        {"module_id": "m", "arguments": bad},
+        resolve_descriptor=lambda mid: async_desc,
+    )
+
+    assert is_error is True
+    assert content[0]["text"]
+    # The error text is sanitised by ErrorMapper; what matters is that nothing
+    # was submitted with silently-emptied inputs.
+    assert bridge.manager.list_tasks() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [None, {}])
+async def test_submit_tool_accepts_null_and_empty_arguments(value: object) -> None:
+    """null and {} both mean "no inputs" and must still submit."""
+    executor = _SlowExecutor()
+    bridge = AsyncTaskBridge(AsyncTaskManager(executor))
+    async_desc = _Descriptor(module_id="m", metadata={"async": True})
+
+    args: dict[str, object] = {"module_id": "m"}
+    if value is not None:
+        args["arguments"] = value
+
+    _content, is_error, _ = await bridge.handle_meta_tool(
+        "__apcore_task_submit",
+        args,
+        resolve_descriptor=lambda mid: async_desc,
+    )
+
+    assert is_error is False
