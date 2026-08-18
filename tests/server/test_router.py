@@ -1306,3 +1306,107 @@ class TestCancellation:
         # Release the submit and let handle_call complete.
         release_submit.set()
         await asyncio.wait_for(task, timeout=2.0)
+
+
+class TestADER1HandleCallNeverRaises:
+    """[A-D-ER-1] handle_call converts every exception into an error tuple.
+
+    Spec docs/features/execution-router.md Contract: "Never raises; all
+    exceptions are caught and converted to error tuples". _dispatch guards its
+    individual awaits but the async-bridge meta-tool call, TraceContext.extract,
+    and Context.create sat outside any handler, so those escaped through the
+    try/finally that had no except.
+    """
+
+    async def test_raising_meta_tool_returns_error_tuple(self) -> None:
+        """An async_bridge whose handle_meta_tool raises must not blow up handle_call."""
+
+        class ExplodingBridge:
+            @staticmethod
+            def is_meta_tool(name: str) -> bool:
+                return name == "__apcore_task_status"
+
+            @staticmethod
+            def is_async_module(_: Any) -> bool:
+                return False
+
+            async def handle_meta_tool(self, *args: Any, **kwargs: Any) -> Any:
+                raise RuntimeError("bridge exploded")
+
+        router = ExecutionRouter(StubExecutor(), async_bridge=ExplodingBridge())
+
+        content, is_error, trace_id = await router.handle_call("__apcore_task_status", {})
+
+        assert is_error is True
+        assert trace_id is None
+        assert content[0]["type"] == "text"
+        assert isinstance(content[0]["text"], str)
+
+    async def test_raising_is_meta_tool_returns_error_tuple(self) -> None:
+        """Even the bridge's own predicate raising must be contained."""
+
+        class ExplodingPredicateBridge:
+            @staticmethod
+            def is_meta_tool(name: str) -> bool:
+                raise RuntimeError("predicate exploded")
+
+        router = ExecutionRouter(StubExecutor(), async_bridge=ExplodingPredicateBridge())
+
+        _content, is_error, _ = await router.handle_call("anything", {})
+
+        assert is_error is True
+
+    async def test_cancel_token_slot_is_released_after_a_raising_dispatch(self) -> None:
+        """The finally that frees the call_id slot must still run."""
+
+        class ExplodingBridge:
+            @staticmethod
+            def is_meta_tool(name: str) -> bool:
+                raise RuntimeError("boom")
+
+        router = ExecutionRouter(StubExecutor(), async_bridge=ExplodingBridge())
+
+        await router.handle_call("anything", {}, extra={"call_id": "c-1"})
+
+        assert "c-1" not in router._cancel_tokens
+
+
+class TestADER3ValidateToolWithoutExecutorValidate:
+    """[A-D-ER-3] An executor with no validate() reports the tool as callable.
+
+    TypeScript checks `typeof this._executor.validate !== 'function'`
+    (router.ts:783) and Rust's trait default returns None (router.rs:833); both
+    report valid. Python let the AttributeError fall into the generic handler
+    and reported valid=False, so a preflight caller saw the same tool as
+    un-callable on Python only.
+    """
+
+    def test_missing_validate_reports_valid(self) -> None:
+        router = ExecutionRouter(StubExecutor())  # StubExecutor has no validate()
+
+        result = router.validate_tool("some.tool", {"x": 1})
+
+        assert result == {"valid": True, "checks": [], "requires_approval": False}
+
+    def test_non_callable_validate_attribute_reports_valid(self) -> None:
+        """A `validate` attribute that is not callable is treated the same way."""
+
+        class WeirdExecutor(StubExecutor):
+            validate = "not a method"
+
+        router = ExecutionRouter(WeirdExecutor())
+
+        assert router.validate_tool("some.tool", {})["valid"] is True
+
+    def test_a_raising_validate_still_reports_invalid(self) -> None:
+        """The capability check must not swallow genuine validation failures."""
+
+        class RaisingExecutor(StubExecutor):
+            def validate(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+                raise ModuleNotFoundStubError(tool_name)
+
+        router = ExecutionRouter(RaisingExecutor())
+        result = router.validate_tool("missing.tool", {})
+
+        assert result["valid"] is False
+        assert result["checks"][0]["check"] == "unexpected"

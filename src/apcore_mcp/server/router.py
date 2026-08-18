@@ -215,8 +215,20 @@ class ExecutionRouter:
         Returns:
             A dict with ``valid``, ``checks``, and ``requires_approval`` keys.
         """
+        # [A-D-ER-3] An executor without validate() has nothing to object to, so
+        # the tool is reported callable — not invalid. Without this check the
+        # AttributeError landed in the generic handler below and preflight
+        # callers saw the same tool as un-callable on Python while TypeScript
+        # (router.ts:783) and Rust (router.rs:833) reported it valid. handle_call
+        # already treats the missing method as skip-and-continue (see the
+        # `except AttributeError` in _dispatch), so this also settles an
+        # inconsistency inside Python.
+        validate = getattr(self._executor, "validate", None)
+        if not callable(validate):
+            return {"valid": True, "checks": [], "requires_approval": False}
+
         try:
-            result = self._executor.validate(tool_name, arguments)
+            result = validate(tool_name, arguments)
             return {
                 "valid": result.valid,
                 "checks": [
@@ -313,6 +325,16 @@ class ExecutionRouter:
 
         try:
             return await self._dispatch(tool_name, arguments, extra, cancel_token)
+        except Exception as error:
+            # [A-D-ER-1] Contract: handle_call never raises — every exception
+            # becomes an error tuple. _dispatch guards its individual awaits
+            # (bridge.submit, executor.validate, ...) but not TraceContext.extract,
+            # Context.create, or the async-bridge meta-tool call, so the outer net
+            # is what makes the contract hold. TS wraps the whole
+            # _handleCallInner body (router.ts:450/753); Rust returns a Result.
+            logger.warning("handle_call failed for %s: %s", tool_name, error, exc_info=True)
+            error_info = self._error_mapper.to_mcp_error(error)
+            return ([{"type": "text", "text": error_info["message"]}], True, None)
         finally:
             # [B-002] Always release the call_id → CancelToken slot so the
             # map doesn't grow unboundedly and a later same-id call doesn't
