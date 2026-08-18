@@ -32,39 +32,47 @@ class SchemaConverter:
     def __init__(self, *, strict: bool = True) -> None:
         self._strict = strict
 
-    def convert_input_schema(self, descriptor: Any) -> dict[str, Any]:
+    def convert_input_schema(self, descriptor: Any, *, strict: bool | None = None) -> dict[str, Any]:
         """Convert apcore ModuleDescriptor.input_schema to MCP inputSchema.
 
         Args:
             descriptor: ModuleDescriptor with input_schema attribute
+            strict: Per-call override of the construction-time strict mode.
+                ``None`` keeps the converter's own setting.
 
         Returns:
             MCP-compatible schema dict with $refs inlined and $defs removed
         """
         schema = descriptor.input_schema
-        return self._convert_schema(schema)
+        return self._convert_schema(schema, strict=strict)
 
-    def convert_output_schema(self, descriptor: Any) -> dict[str, Any]:
+    def convert_output_schema(self, descriptor: Any, *, strict: bool | None = None) -> dict[str, Any]:
         """Convert apcore ModuleDescriptor.output_schema.
 
         Args:
             descriptor: ModuleDescriptor with output_schema attribute
+            strict: Per-call override of the construction-time strict mode.
+                ``None`` keeps the converter's own setting.
 
         Returns:
             MCP-compatible schema dict with $refs inlined and $defs removed
         """
         schema = descriptor.output_schema
-        return self._convert_schema(schema)
+        return self._convert_schema(schema, strict=strict)
 
-    def _convert_schema(self, schema: dict[str, Any]) -> dict[str, Any]:
+    def _convert_schema(self, schema: dict[str, Any], *, strict: bool | None = None) -> dict[str, Any]:
         """Convert a schema, applying all transformations.
 
         Args:
             schema: JSON Schema dict to convert
+            strict: Per-call override of the construction-time strict mode.
+                ``None`` keeps the converter's own setting.
 
         Returns:
             Converted schema with $refs inlined, $defs removed, and type ensured
         """
+        strict = self._strict if strict is None else strict
+
         # Make a deep copy to avoid modifying the original
         schema = copy.deepcopy(schema)
 
@@ -75,7 +83,7 @@ class SchemaConverter:
             # in strict mode, INCLUDING the empty-schema short-circuit.
             # Pre-fix Python skipped strict on this branch; TS+Rust both
             # inject. Now uniform.
-            if self._strict:
+            if strict:
                 result["additionalProperties"] = False
             return result
 
@@ -89,7 +97,7 @@ class SchemaConverter:
         # Ensure schema has type: object
         schema = self._ensure_object_type(schema)
 
-        if self._strict:
+        if strict:
             self._inject_additional_properties_false(schema)
 
         return schema

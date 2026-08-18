@@ -631,6 +631,51 @@ class TestBuildInitOptions:
         assert opts.server_version == "1.2.3"
         assert opts.capabilities is not None
 
+    def test_resources_list_changed_is_advertised(self) -> None:
+        """[A-D-FA-1] resources.listChanged must be true, matching TypeScript and Rust.
+
+        NotificationOptions defaults resources_changed to False, which surfaced
+        in the initialize response as resources: {listChanged: false} and kept
+        clients from ever subscribing to notifications/resources/list_changed.
+        """
+        factory = MCPServerFactory()
+        server = factory.create_server(name="test-server", version="1.2.3")
+        factory.register_handlers(server, [], type("R", (), {"handle_call": None})())
+        factory.register_resource_handlers(server, StubRegistry([]))
+
+        opts = factory.build_init_options(server, name="test-server", version="1.2.3")
+
+        assert opts.capabilities.resources is not None
+        assert opts.capabilities.resources.listChanged is True
+
+
+class TestADFA2PerCallStrict:
+    """[A-D-FA-2] build_tool's strict argument reaches the local converter.
+
+    The flag used to gate only the registry export_schema attempt, so
+    build_tool(descriptor, strict=False) on a strict factory still emitted
+    additionalProperties: false. TypeScript honours the per-call flag
+    (factory.ts:188).
+    """
+
+    def test_strict_false_suppresses_additional_properties(self, simple_descriptor) -> None:
+        factory = MCPServerFactory(strict=True)
+
+        tool = factory.build_tool(simple_descriptor, strict=False)
+
+        assert "additionalProperties" not in tool.inputSchema
+
+    def test_strict_true_overrides_a_lax_factory(self, simple_descriptor) -> None:
+        factory = MCPServerFactory(strict=False)
+
+        tool = factory.build_tool(simple_descriptor, strict=True)
+
+        assert tool.inputSchema["additionalProperties"] is False
+
+    def test_strict_none_keeps_the_factory_setting(self, simple_descriptor) -> None:
+        assert MCPServerFactory(strict=True).build_tool(simple_descriptor).inputSchema["additionalProperties"] is False
+        assert "additionalProperties" not in MCPServerFactory(strict=False).build_tool(simple_descriptor).inputSchema
+
 
 class TestRichDescription:
     """Tests for MCPServerFactory rich_description=True (apcore-toolkit 0.6+)."""

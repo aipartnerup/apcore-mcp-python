@@ -138,7 +138,13 @@ class MCPServerFactory:
                     exc,
                 )
         if input_schema is None:
-            input_schema = self._schema_converter.convert_input_schema(descriptor)
+            # [A-D-FA-2] Pass the resolved per-call flag through. Pre-fix the
+            # local converter used its construction-time strict setting, so
+            # build_tool(descriptor, strict=False) on a strict factory still
+            # emitted a strict schema and the argument only gated whether the
+            # registry export_schema path was attempted. TypeScript honours the
+            # per-call flag (factory.ts:188).
+            input_schema = self._schema_converter.convert_input_schema(descriptor, strict=strict)
 
         # NOTE: Python uses SchemaExporter.export_mcp() for annotation mapping,
         # while TypeScript uses AnnotationMapper.toMcpAnnotations() directly.
@@ -493,7 +499,15 @@ class MCPServerFactory:
             server_name=name,
             server_version=version,
             capabilities=server.get_capabilities(
-                notification_options=NotificationOptions(tools_changed=True),
+                # [A-D-FA-1] resources_changed must be advertised explicitly:
+                # NotificationOptions defaults it to False, which surfaced as
+                # `resources: {listChanged: false}` in the initialize response
+                # and stopped clients from subscribing to
+                # notifications/resources/list_changed. TypeScript declares
+                # `resources: { listChanged: true }` (factory.ts:131) and Rust
+                # returns ResourcesCapability { list_changed: true }
+                # (factory.rs:690).
+                notification_options=NotificationOptions(tools_changed=True, resources_changed=True),
                 experimental_capabilities={},
             ),
         )
