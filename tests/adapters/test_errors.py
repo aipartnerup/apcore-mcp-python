@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from apcore_mcp.adapters.errors import ErrorMapper
+from apcore_mcp.adapters.errors import CIRCUIT_BREAKER_RECOVERY_GUIDANCE, ErrorMapper
 
 # Declarative user_fixable policy, mirroring apcore 0.24.0 _USER_FIXABLE_BY_CODE.
 _USER_FIXABLE_BY_CODE: dict[str, bool] = {
@@ -673,12 +673,14 @@ class TestD9003ToMcpErrorAnyDelegatesToModuleError:
         assert mapper.to_mcp_error_any(ValueError("secret")) == internal_error_response()
 
 
-class TestPyW2TaskLimitExceededDeadBranch:
-    """[Py-W2] Dead TASK_LIMIT_EXCEEDED branch in _handle_apcore_error must be removed.
+class TestPyW2TaskLimitExceededFastPath:
+    """[Py-W2] A real TaskLimitExceededError is served by the isinstance fast path.
 
     TaskLimitExceededError is handled by the fast-path isinstance check in
-    to_mcp_error() before _handle_apcore_error is ever called, making the
-    code inside _handle_apcore_error that checks for TASK_LIMIT_EXCEEDED dead.
+    to_mcp_error() before _handle_apcore_error is ever called. The code-based
+    branch inside _handle_apcore_error is NOT dead, however — it serves
+    duck-typed and wire-reconstructed errors (see
+    TestADEM3CodeBasedDispatchForTypedErrors below).
     """
 
     @pytest.fixture
@@ -713,18 +715,108 @@ class TestPyW2TaskLimitExceededDeadBranch:
         assert result["retryable"] is True
         assert "message" in result
 
-    def test_dead_branch_removed_from_handle_apcore_error(self, mapper: ErrorMapper) -> None:
-        """After the fix, _handle_apcore_error must NOT contain a TASK_LIMIT_EXCEEDED branch.
 
-        We verify this by inspecting the source of _handle_apcore_error.
-        If the dead branch is still there, this test fails.
-        """
-        import inspect
+class TestADEM3CodeBasedDispatchForTypedErrors:
+    """[A-D-EM-3] CIRCUIT_BREAKER_OPEN / TASK_LIMIT_EXCEEDED dispatch on the code too.
 
-        src = inspect.getsource(mapper._handle_apcore_error)
-        # The dead branch has a very specific pattern. After removal it must not appear.
-        # We check for the combined pattern 'TASK_LIMIT_EXCEEDED' inside _handle_apcore_error.
-        assert "TASK_LIMIT_EXCEEDED" not in src, (
-            "_handle_apcore_error still contains a dead TASK_LIMIT_EXCEEDED branch. "
-            "Remove lines 240-249 per Py-W2 fix instructions."
+    The isinstance fast paths in to_mcp_error only fire for genuine apcore
+    exception instances, and CircuitBreakerOpenError does not even exist on
+    apcore < 0.20 (the import shim sets it to None). A duck-typed or
+    wire-reconstructed ModuleError carrying either code must still get the
+    retryable envelope plus aiGuidance, matching errors.ts:253/:268 and
+    errors.rs:236/:265.
+    """
+
+    @pytest.fixture
+    def mapper(self) -> ErrorMapper:
+        return ErrorMapper()
+
+    def test_duck_typed_task_limit_exceeded_is_retryable(self, mapper: ErrorMapper) -> None:
+        """A non-apcore error carrying TASK_LIMIT_EXCEEDED gets the typed envelope."""
+        err = ModuleError(
+            code="TASK_LIMIT_EXCEEDED",
+            message="Task limit exceeded: 10",
+            details={"max_tasks": 10},
         )
+        result = mapper.to_mcp_error(err)
+
+        assert result["errorType"] == "TASK_LIMIT_EXCEEDED"
+        assert result["retryable"] is True
+
+    def test_duck_typed_circuit_breaker_open_gets_guidance(self, mapper: ErrorMapper) -> None:
+        """A non-apcore error carrying CIRCUIT_BREAKER_OPEN gets retryable + aiGuidance."""
+        err = ModuleError(
+            code="CIRCUIT_BREAKER_OPEN",
+            message="Circuit breaker is OPEN for module: demo",
+            details={"module_id": "demo"},
+        )
+        result = mapper.to_mcp_error(err)
+
+        assert result["errorType"] == "CIRCUIT_BREAKER_OPEN"
+        assert result["retryable"] is True
+        assert result["aiGuidance"] == CIRCUIT_BREAKER_RECOVERY_GUIDANCE
+
+    def test_duck_typed_circuit_breaker_open_preserves_per_module_hint(self, mapper: ErrorMapper) -> None:
+        """A populated ai_guidance wins over the canonical fallback."""
+        err = ModuleError(
+            code="CIRCUIT_BREAKER_OPEN",
+            message="Circuit breaker is OPEN for module: demo",
+            ai_guidance="Retry after 30s.",
+        )
+        result = mapper.to_mcp_error(err)
+
+        assert result["aiGuidance"] == "Retry after 30s."
+
+
+class TestADEM4ToMcpErrorNeverRaises:
+    """[A-D-EM-4] to_mcp_error must not raise on malformed SchemaValidationError details.
+
+    Spec docs/features/error-mapper.md: "Never raises; all exceptions produce a
+    valid error dict". details["errors"] is upstream controlled, so a string or a
+    list of non-mappings must degrade to the canonical message rather than blow
+    up with AttributeError.
+    """
+
+    @pytest.fixture
+    def mapper(self) -> ErrorMapper:
+        return ErrorMapper()
+
+    def test_string_errors_detail_returns_canonical_message(self, mapper: ErrorMapper) -> None:
+        """details={"errors": "boom"} must not iterate the string into str.get."""
+        err = ModuleError(code="SCHEMA_VALIDATION_ERROR", message="bad", details={"errors": "boom"})
+        result = mapper.to_mcp_error(err)
+
+        assert result["isError"] is True
+        assert result["errorType"] == "SCHEMA_VALIDATION_ERROR"
+        assert result["message"] == "Schema validation failed"
+
+    def test_non_dict_error_entries_are_stringified(self, mapper: ErrorMapper) -> None:
+        """details={"errors": [42]} must not call int.get."""
+        err = ModuleError(code="SCHEMA_VALIDATION_ERROR", message="bad", details={"errors": [42]})
+        result = mapper.to_mcp_error(err)
+
+        assert result["isError"] is True
+        assert result["message"] == "Schema validation failed:\n  unknown: 42"
+
+    def test_non_mapping_details_are_narrowed_to_none(self, mapper: ErrorMapper) -> None:
+        """A non-mapping details must not break the lookups in _handle_apcore_error."""
+        err = ModuleError(code="SCHEMA_VALIDATION_ERROR", message="bad")
+        err.details = "not a mapping"  # type: ignore[assignment]
+        result = mapper.to_mcp_error(err)
+
+        assert result["isError"] is True
+        assert result["details"] is None
+        assert result["message"] == "Schema validation failed"
+
+    @pytest.mark.parametrize(
+        "code",
+        ["APPROVAL_PENDING", "APPROVAL_DENIED", "CONFIG_ENV_MAP_CONFLICT", "PIPELINE_ABORT", "STEP_NOT_FOUND"],
+    )
+    def test_detail_reading_codes_survive_non_mapping_details(self, mapper: ErrorMapper, code: str) -> None:
+        """Every branch that reads details[...] must tolerate a non-mapping."""
+        err = ModuleError(code=code, message="boom")
+        err.details = ["not", "a", "mapping"]  # type: ignore[assignment]
+        result = mapper.to_mcp_error(err)
+
+        assert result["isError"] is True
+        assert result["errorType"] == code

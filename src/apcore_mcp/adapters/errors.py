@@ -22,6 +22,15 @@ except ImportError:  # pragma: no cover
 
 from apcore_mcp.constants import ERROR_CODES
 
+# Canonical recovery hint emitted when apcore did not populate a per-module
+# ``ai_guidance`` on a circuit-breaker rejection. Kept byte-identical with the
+# TypeScript and Rust SDKs.
+CIRCUIT_BREAKER_RECOVERY_GUIDANCE = (
+    "Module's circuit breaker is OPEN — repeated failures have tripped "
+    "the breaker. Wait until the recovery window elapses, then retry; "
+    "the breaker will move to HALF_OPEN and accept a trial call."
+)
+
 
 class ErrorMapper:
     """Maps apcore exceptions to MCP error response dictionaries."""
@@ -78,15 +87,7 @@ class ErrorMapper:
         # Prefer isinstance dispatch for apcore 0.19 error classes so cross-language
         # error propagation stays stable even if `.code` drift occurs upstream.
         if isinstance(error, TaskLimitExceededError):
-            result = {
-                "isError": True,
-                "errorType": ERROR_CODES["TASK_LIMIT_EXCEEDED"],
-                "message": getattr(error, "message", str(error)),
-                "details": getattr(error, "details", None),
-                "retryable": True,
-            }
-            self._attach_ai_guidance(error, result)
-            return result
+            return self._task_limit_response(error)
         # apcore 0.20.0: surface circuit-breaker rejections with a
         # retryable=true envelope and an AI-facing recovery hint so the
         # orchestrator backs off until the recovery window elapses. The
@@ -94,24 +95,7 @@ class ErrorMapper:
         # recovery message; ``_attach_ai_guidance`` mirrors it onto the
         # MCP envelope under the canonical ``aiGuidance`` key.
         if CircuitBreakerOpenError is not None and isinstance(error, CircuitBreakerOpenError):
-            result = {
-                "isError": True,
-                "errorType": ERROR_CODES["CIRCUIT_BREAKER_OPEN"],
-                "message": getattr(error, "message", str(error)),
-                "details": getattr(error, "details", None),
-                "retryable": True,
-            }
-            self._attach_ai_guidance(error, result)
-            # [D10-003] Mirror TS+Rust: when apcore did not populate a
-            # per-module ai_guidance, fall back to the canonical recovery
-            # hint so cross-language envelopes stay byte-identical.
-            result.setdefault(
-                "aiGuidance",
-                "Module's circuit breaker is OPEN — repeated failures have tripped "
-                "the breaker. Wait until the recovery window elapses, then retry; "
-                "the breaker will move to HALF_OPEN and accept a trial call.",
-            )
-            return result
+            return self._circuit_breaker_response(error)
         # Check if it's an apcore ModuleError by isinstance (fast path for
         # known hierarchy) or structural duck-typing (fallback for compatibility).
         if isinstance(error, ModuleError) or (
@@ -152,12 +136,44 @@ class ErrorMapper:
         "suggestion": "suggestion",
     }
 
+    def _task_limit_response(self, error: Exception) -> dict[str, Any]:
+        """Canonical TASK_LIMIT_EXCEEDED envelope (retryable + AI guidance)."""
+        result: dict[str, Any] = {
+            "isError": True,
+            "errorType": ERROR_CODES["TASK_LIMIT_EXCEEDED"],
+            "message": getattr(error, "message", str(error)),
+            "details": getattr(error, "details", None),
+            "retryable": True,
+        }
+        self._attach_ai_guidance(error, result)
+        return result
+
+    def _circuit_breaker_response(self, error: Exception) -> dict[str, Any]:
+        """Canonical CIRCUIT_BREAKER_OPEN envelope (retryable + AI guidance)."""
+        result: dict[str, Any] = {
+            "isError": True,
+            "errorType": ERROR_CODES["CIRCUIT_BREAKER_OPEN"],
+            "message": getattr(error, "message", str(error)),
+            "details": getattr(error, "details", None),
+            "retryable": True,
+        }
+        self._attach_ai_guidance(error, result)
+        # [D10-003] Mirror TS+Rust: when apcore did not populate a
+        # per-module ai_guidance, fall back to the canonical recovery
+        # hint so cross-language envelopes stay byte-identical.
+        result.setdefault("aiGuidance", CIRCUIT_BREAKER_RECOVERY_GUIDANCE)
+        return result
+
     def _handle_apcore_error(self, error: Exception) -> dict[str, Any]:
         """Handle known apcore errors."""
         code: str = getattr(error, "code", "UNKNOWN")
         message: str = getattr(error, "message", str(error))
         raw_details: Any = getattr(error, "details", None)
-        details: dict[str, Any] | None = raw_details if raw_details is not None else None
+        # A duck-typed or wire-reconstructed ModuleError may carry a non-mapping
+        # ``details`` (string, list, scalar). Every lookup below assumes a
+        # mapping and ``to_mcp_error`` must never raise, so narrow to the
+        # declared type once here instead of guarding each call site.
+        details: dict[str, Any] | None = raw_details if isinstance(raw_details, dict) else None
 
         # Convert internal errors to generic message
         if code in self._INTERNAL_ERROR_CODES:
@@ -176,6 +192,18 @@ class ErrorMapper:
                 "message": "Access denied",
                 "details": None,
             }
+
+        # [A-D-EM-3] Code-based dispatch for the two classes that also have an
+        # isinstance fast path above. A duck-typed or wire-reconstructed
+        # ModuleError carrying these codes never reaches the isinstance branch
+        # (and CircuitBreakerOpenError is absent entirely on apcore < 0.20), so
+        # without these rows it would fall through to the plain passthrough and
+        # lose ``retryable`` / ``aiGuidance``. Mirrors errors.ts:253 / :268.
+        if code == ERROR_CODES["TASK_LIMIT_EXCEEDED"]:
+            return self._task_limit_response(error)
+
+        if code == ERROR_CODES["CIRCUIT_BREAKER_OPEN"]:
+            return self._circuit_breaker_response(error)
 
         # Schema validation errors need special formatting.
         # Parity with TS+Rust: always emit the canonical formatted message — never
@@ -299,16 +327,27 @@ class ErrorMapper:
             if value is not None and dest_field not in result:
                 result[dest_field] = value
 
-    def _format_validation_errors(self, errors: list[dict[str, Any]]) -> str:
-        """Format SchemaValidationError field-level errors into readable message."""
-        if not errors:
+    def _format_validation_errors(self, errors: Any) -> str:
+        """Format SchemaValidationError field-level errors into readable message.
+
+        ``errors`` comes from ``error.details["errors"]`` and is upstream
+        controlled — it may be a string, a scalar, or a list holding non-mapping
+        entries. ``to_mcp_error`` never raises, so anything that is not a list of
+        dicts degrades to the canonical message. Mirrors TypeScript's
+        ``Array.isArray`` guard (errors.ts:447) and Rust's ``Some(Value::Array)``
+        match (errors.rs:329).
+        """
+        if not isinstance(errors, list) or not errors:
             return "Schema validation failed"
 
         # Format each error as "field: message"
         error_lines = []
         for err in errors:
-            field = err.get("field", "unknown")
-            msg = err.get("message", "invalid")
+            if isinstance(err, dict):
+                field = err.get("field", "unknown")
+                msg = err.get("message", "invalid")
+            else:
+                field, msg = "unknown", str(err)
             error_lines.append(f"{field}: {msg}")
 
         return "Schema validation failed:\n" + "\n".join(f"  {line}" for line in error_lines)
