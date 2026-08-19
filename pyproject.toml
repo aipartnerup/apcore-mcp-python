@@ -92,3 +92,9 @@ show_missing = true
 [tool.apdev]
 base_package = "apcore_mcp"
 src_dir = "src"
+
+[tool.ruff.lint.isort]
+# `apcore_mcp` and `tests` are this repository's own packages, so isort must group
+# them apart from third-party imports. Without this ruff reads `apcore_mcp` as
+# third-party and flags the correct grouping as I001.
+known-first-party = ["apcore_mcp", "tests"]
