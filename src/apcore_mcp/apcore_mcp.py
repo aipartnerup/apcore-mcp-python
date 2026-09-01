@@ -132,6 +132,96 @@ def _load_config_bus_overrides(
     }
 
 
+def _compute_management_surfaces(registry: Any) -> dict[str, bool]:
+    """[aiperceivable/apcore-mcp#16 Phase A] Scan *registry* for each of the
+    four `system.*` management surfaces.
+
+    Mirrors the unfiltered ``registry.list()`` scan
+    :meth:`~apcore_mcp.server.factory.MCPServerFactory.register_resource_handlers`
+    already performs to decide which ``system.*`` resources/tools actually
+    exist — the ``initialize`` capability must describe what this server
+    instance really exposes, not what the caller's ``tags``/``prefix``
+    filter happens to include.
+    """
+    all_ids = registry.list()
+    return {
+        "health": any(mid.startswith("system.health.") for mid in all_ids),
+        "usage": any(mid.startswith("system.usage.") for mid in all_ids),
+        "manifest": any(mid.startswith("system.manifest.") for mid in all_ids),
+        "control": any(mid.startswith("system.control.") for mid in all_ids),
+    }
+
+
+def _warn_if_unprotected_control_surface(executor: Any) -> None:
+    """[aiperceivable/apcore-mcp#15(b)] Warn loudly when `system.control.*`
+    modules are registered but no recognised gate protects them.
+
+    Calls ``executor.governance_state()`` (apcore>=0.28.0, PROTOCOL_SPEC
+    §6.6.5) — a pure read with no side effects — and, when
+    ``unprotected_control_surface`` is true, logs a multi-line WARNING
+    naming which protections are missing and how to add one. This is
+    advisory only: it never raises and never blocks startup, matching
+    ``governance_state()``'s own contract that reacting to the finding is
+    the caller's decision. Executors that predate ``governance_state()``
+    (or a test double without it) are silently skipped.
+    """
+    governance_state_fn = getattr(executor, "governance_state", None)
+    if not callable(governance_state_fn):
+        return
+    try:
+        state = governance_state_fn()
+    except Exception:
+        logger.debug(
+            "executor.governance_state() raised; skipping unprotected-control-surface check",
+            exc_info=True,
+        )
+        return
+
+    if not getattr(state, "unprotected_control_surface", False):
+        return
+
+    missing: list[str] = []
+    if not state.acl_configured:
+        missing.append("  - No ACL is configured (no `mcp.acl` Config Bus section and no acl= argument).")
+    elif not state.builtin_acl_gate_wired:
+        missing.append(
+            "  - An ACL is configured, but the active pipeline strategy does not include the built-in ACL gate."
+        )
+    if not state.approval_handler_configured and not state.policy_strict:
+        missing.append(
+            "  - No approval handler is configured and no strict ExecutionPolicy is attached "
+            "(approval_handler= is unset)."
+        )
+    if not state.all_control_modules_require_approval:
+        missing.append("  - Not every registered system.control.* module declares requires_approval=True.")
+
+    logger.warning(
+        "\n".join(
+            [
+                "=" * 78,
+                "UNPROTECTED MANAGEMENT SURFACE",
+                "system.control.* modules are registered on this server, but no",
+                "recognised authorization gate is wired in front of them. Any caller",
+                "that can reach this MCP server can reload modules, change runtime",
+                "config, and toggle features.",
+                "",
+                "Missing protections:",
+                *missing,
+                "",
+                "Fix by configuring one or more of:",
+                "  - mcp.acl (Config Bus) or acl=<apcore.ACL> restricting system.control.*",
+                "    to authorized callers — see apcore_mcp.acl_builder's module",
+                "    docstring for a worked example.",
+                "  - approval_handler=<ApprovalHandler> on APCoreMCP(...)/serve(...), so",
+                "    a human signs off on every system.control.* call.",
+                "  - An ExecutionPolicy(strict=True) attached to the executor.",
+                "This is a warning only — the server will still start.",
+                "=" * 78,
+            ]
+        )
+    )
+
+
 def _validate_common_kwargs(
     *,
     name: str,
@@ -493,8 +583,22 @@ class APCoreMCP:
             approval_bridge=approval_bridge,
             descriptor_lookup=descriptor_lookup,
         )
-        factory.register_resource_handlers(server, self._registry)
-        init_options = factory.build_init_options(server, name=self._name, version=version)
+        factory.register_resource_handlers(server, self._registry, router)
+
+        # [aiperceivable/apcore-mcp#16 Phase A] Advertise the
+        # com.aiperceivable/management extension capability for whichever
+        # system.* surfaces are actually registered.
+        management_surfaces = _compute_management_surfaces(self._registry)
+        init_options = factory.build_init_options(
+            server, name=self._name, version=version, management_surfaces=management_surfaces
+        )
+
+        # [aiperceivable/apcore-mcp#15(b)] Advisory-only startup check: warn
+        # loudly if system.control.* is registered with no gate in front of
+        # it. Runs after the executor is fully assembled (middleware, ACL,
+        # approval handler all wired above) and before the transport starts
+        # listening.
+        _warn_if_unprotected_control_surface(self._executor)
 
         return server, router, tools, init_options, version
 

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
+from urllib.parse import parse_qs, unquote
 
 from apcore.schema.exporter import SchemaExporter
 from apcore.schema.types import SchemaDefinition
@@ -25,6 +27,66 @@ logger = logging.getLogger(__name__)
 
 
 _AI_INTENT_KEYS = ("x-when-to-use", "x-when-not-to-use", "x-common-mistakes", "x-workflow-hints")
+
+# aiperceivable/apcore-mcp#15: the three read-only `system.*` namespaces.
+# `system.control.*` is deliberately excluded -- it performs writes and stays
+# a Tool. Classification is by module_id prefix ONLY (no adapter-level
+# toggle), so it can never drift from what the registry actually holds.
+_READONLY_SYSTEM_PREFIXES = ("system.health.", "system.usage.", "system.manifest.")
+
+# The URI scheme this factory reads read-only system.* modules under.
+_SYSTEM_RESOURCE_SCHEME = "apcore"
+
+# Summary/full read-only modules -> one static Resource each, keyed by the
+# apcore module_id they proxy. `system.usage.summary` additionally accepts an
+# optional `?period=` query parameter on read (not advertised as a template
+# parameter -- it is a plain optional query string, matching the module's own
+# optional `period` input).
+_SYSTEM_STATIC_RESOURCE_IDS = (
+    "system.health.summary",
+    "system.usage.summary",
+    "system.manifest.full",
+)
+
+# Per-module read-only modules -> one ResourceTemplate each, parameterized by
+# `{module_id}` as a URI path segment. `system.usage.module` additionally
+# accepts an optional `?period=` query parameter on read.
+_SYSTEM_TEMPLATE_RESOURCE_IDS = (
+    "system.health.module",
+    "system.usage.module",
+    "system.manifest.module",
+)
+
+# aiperceivable/apcore-mcp#15's URI-convention table declares
+# `system.usage.module`'s template as `apcore://system.usage.module/{module_id}{?period}`
+# (RFC 6570 form-style query expansion) -- the only one of the three templates
+# with an optional query parameter. Cross-checked against apcore-mcp-typescript's
+# `systemResourceUriTemplate()`, which appends the same `{?period}` suffix.
+_SYSTEM_TEMPLATE_QUERY_SUFFIX = {"system.usage.module": "{?period}"}
+
+
+def is_readonly_system_module(module_id: str) -> bool:
+    """Return True when *module_id* is a read-only `system.*` management module.
+
+    Per aiperceivable/apcore-mcp#15, `system.health.*`, `system.usage.*` and
+    `system.manifest.*` are read-only and MUST be projected as MCP resources
+    rather than tools. `system.control.*` performs writes and is unaffected --
+    it is not matched here and keeps its normal Tool projection.
+    """
+    return module_id.startswith(_READONLY_SYSTEM_PREFIXES)
+
+
+# aiperceivable/apcore-mcp#16 Phase A -- the `com.aiperceivable/management`
+# initialize-time extension capability, and the stable order its `surfaces`
+# array is emitted in.
+_MANAGEMENT_EXTENSION_KEY = "com.aiperceivable/management"
+_MANAGEMENT_SURFACE_ORDER = ("health", "usage", "manifest", "control")
+# apcore's PROTOCOL_SPEC version as of this file's last sync (PROTOCOL_SPEC.md
+# header, apcore repo, 2026-08-31: "Version: 1.30.0"). apcore does not export
+# this as a runtime constant (`apcore.__version__` is the *package* version,
+# a different number), so it must be updated here by hand when the spec the
+# management-extension contract (§6.6.5) lives in bumps.
+_PROTOCOL_SPEC_VERSION = "1.30.0"
 
 
 class MCPServerFactory:
@@ -240,6 +302,12 @@ class MCPServerFactory:
         whose definition is None are skipped. Errors during build_tool are
         logged as warnings and the module is skipped.
 
+        [aiperceivable/apcore-mcp#15] Read-only `system.*` modules
+        (`system.health.*`, `system.usage.*`, `system.manifest.*`) are
+        skipped here -- they are projected as MCP resources instead, by
+        :meth:`register_resource_handlers`. `system.control.*` is unaffected
+        and still becomes a Tool.
+
         Args:
             registry: An apcore Registry (or compatible stub) with list()
                       and get_definition() methods.
@@ -251,6 +319,8 @@ class MCPServerFactory:
         """
         tools: list[mcp_types.Tool] = []
         for module_id in registry.list(tags=tags, prefix=prefix):
+            if is_readonly_system_module(module_id):
+                continue
             descriptor = registry.get_definition(module_id)
             if descriptor is None:
                 logger.warning("Skipped module %s: no definition found", module_id)
@@ -427,27 +497,58 @@ class MCPServerFactory:
         self,
         server: Server,
         registry: Any,
+        router: Any | None = None,
     ) -> None:
-        """Register list_resources and read_resource handlers for modules with documentation.
+        """Register list_resources/list_resource_templates/read_resource handlers.
 
-        Iterates over registry.list(), gets each definition, and filters for
-        descriptors that have a non-null ``documentation`` field. Registers:
-        - list_resources: returns Resource objects with URI ``docs://{module_id}``
-        - read_resource: returns documentation text for the requested module
+        Two independent sources feed the resource surface:
+
+        - Modules with a non-null ``documentation`` field are exposed as
+          ``docs://{module_id}`` resources (unchanged behaviour).
+        - [aiperceivable/apcore-mcp#15] Read-only ``system.*`` modules
+          (``system.health.*``, ``system.usage.*``, ``system.manifest.*``)
+          are exposed under the ``apcore://`` scheme: the three
+          summary/full modules as static resources, the three per-module
+          ones as resource *templates* parameterized by ``{module_id}``.
+          Only module ids the registry actually holds get a resource --
+          classification is by module_id prefix alone (see
+          :func:`is_readonly_system_module`); there is no separate
+          enable/disable toggle for this. Reading any ``apcore://system.*``
+          URI dispatches through ``router.handle_call`` -- never directly
+          against the registry/module -- so ACL and audit are never
+          bypassed for a call made via resources/read instead of
+          tools/call.
 
         Args:
             server: The MCP Server to register handlers on.
             registry: An apcore Registry with list() and get_definition() methods.
+            router: An :class:`~apcore_mcp.server.router.ExecutionRouter` (or
+                compatible stub) with an async ``handle_call(module_id,
+                arguments, extra)`` method. Required for the ``apcore://``
+                system-module resources; when ``None`` those resources are
+                not registered (the ``docs://`` behaviour is unaffected).
         """
         # Build a map of module_id -> documentation for modules with docs
         docs_map: dict[str, str] = {}
+        registered_ids: set[str] = set()
         for module_id in registry.list():
+            registered_ids.add(module_id)
             try:
                 descriptor = registry.get_definition(module_id)
                 if descriptor is not None and getattr(descriptor, "documentation", None):
                     docs_map[module_id] = descriptor.documentation
             except Exception as e:
                 logger.warning("Failed to get definition for %s: %s", module_id, e)
+
+        # [aiperceivable/apcore-mcp#15] Only project a system.* resource for a
+        # module id the registry actually holds -- registering one for a
+        # module that was never registered (e.g. sys_modules disabled, or a
+        # future SDK exposing a subset) would advertise a resource that 404s
+        # on every read.
+        static_system_ids = [mid for mid in _SYSTEM_STATIC_RESOURCE_IDS if mid in registered_ids] if router else []
+        template_system_ids = (
+            [mid for mid in _SYSTEM_TEMPLATE_RESOURCE_IDS if mid in registered_ids] if router else []
+        )
 
         @server.list_resources()
         async def handle_list_resources() -> list[mcp_types.Resource]:
@@ -460,24 +561,114 @@ class MCPServerFactory:
                         mimeType="text/plain",
                     )
                 )
+            for mid in static_system_ids:
+                resources.append(
+                    mcp_types.Resource(
+                        uri=AnyUrl(f"{_SYSTEM_RESOURCE_SCHEME}://{mid}"),
+                        name=mid,
+                        mimeType="application/json",
+                    )
+                )
             return resources
+
+        if template_system_ids:
+            # [aiperceivable/apcore-mcp#15] Requires the installed MCP SDK to
+            # support resources/templates/list (``Server.list_resource_templates``);
+            # this repo's `mcp>=1.26` floor does.
+            @server.list_resource_templates()
+            async def handle_list_resource_templates() -> list[mcp_types.ResourceTemplate]:
+                return [
+                    mcp_types.ResourceTemplate(
+                        uriTemplate=(
+                            f"{_SYSTEM_RESOURCE_SCHEME}://{mid}/{{module_id}}"
+                            f"{_SYSTEM_TEMPLATE_QUERY_SUFFIX.get(mid, '')}"
+                        ),
+                        name=mid,
+                        mimeType="application/json",
+                    )
+                    for mid in template_system_ids
+                ]
 
         @server.read_resource()
         async def handle_read_resource(uri: Any) -> list[ReadResourceContents]:
             uri_str = str(uri)
-            prefix = "docs://"
-            if not uri_str.startswith(prefix):
+            docs_prefix = "docs://"
+            system_prefix = f"{_SYSTEM_RESOURCE_SCHEME}://system."
+            if uri_str.startswith(system_prefix):
+                return await self._read_system_resource(
+                    uri, uri_str, router, static_system_ids, template_system_ids
+                )
+            if not uri_str.startswith(docs_prefix):
                 raise ValueError(f"Unsupported URI scheme: {uri_str}")
-            module_id = uri_str[len(prefix) :]
+            module_id = uri_str[len(docs_prefix) :]
             if module_id not in docs_map:
                 raise ValueError(f"Resource not found: {uri_str}")
             return [ReadResourceContents(content=docs_map[module_id], mime_type="text/plain")]
+
+    async def _read_system_resource(
+        self,
+        uri: Any,
+        uri_str: str,
+        router: Any | None,
+        static_system_ids: list[str],
+        template_system_ids: list[str],
+    ) -> list[ReadResourceContents]:
+        """Resolve an ``apcore://system.*`` resource read via the router.
+
+        [aiperceivable/apcore-mcp#15] Parses the module id and optional
+        ``period`` query parameter out of *uri*, assembles tool-call-style
+        arguments, and dispatches through ``router.handle_call`` -- the same
+        entry point ``tools/call`` uses -- so ACL and audit apply identically
+        regardless of whether the caller used ``tools/call`` or
+        ``resources/read``. Errors (unknown resource, ACL denial, execution
+        failure) are all raised as :class:`ValueError`, matching the
+        ``docs://`` "Resource not found" style already used by this handler.
+        """
+        if router is None:
+            raise ValueError(f"Resource not found: {uri_str}")
+
+        base_module_id = uri.host or ""
+        raw_path = (uri.path or "").lstrip("/")
+        target_module_id = unquote(raw_path) if raw_path else None
+        period = None
+        if uri.query:
+            parsed_query = parse_qs(uri.query)
+            values = parsed_query.get("period")
+            if values:
+                period = values[0]
+
+        arguments: dict[str, Any] = {}
+        if base_module_id in static_system_ids:
+            if base_module_id == "system.usage.summary" and period is not None:
+                arguments["period"] = period
+        elif base_module_id in template_system_ids:
+            if not target_module_id:
+                raise ValueError(f"Resource not found: {uri_str} (missing module_id path segment)")
+            arguments["module_id"] = target_module_id
+            if base_module_id == "system.usage.module" and period is not None:
+                arguments["period"] = period
+        else:
+            raise ValueError(f"Resource not found: {uri_str}")
+
+        extra: dict[str, Any] = {}
+        identity = auth_identity_var.get()
+        if identity is not None:
+            extra["identity"] = identity
+
+        content, is_error, _trace_id = await router.handle_call(base_module_id, arguments, extra=extra)
+        text_parts = [item["text"] for item in content if item.get("type") == "text"]
+        text_output = "\n".join(text_parts) if text_parts else json.dumps({})
+        if is_error:
+            raise ValueError(f"Resource not found: {uri_str} ({text_output})")
+        return [ReadResourceContents(content=text_output, mime_type="application/json")]
 
     def build_init_options(
         self,
         server: Server,
         name: str,
         version: str,
+        *,
+        management_surfaces: dict[str, bool] | None = None,
     ) -> InitializationOptions:
         """Build InitializationOptions for running the server.
 
@@ -485,23 +676,51 @@ class MCPServerFactory:
             server: The configured Server instance.
             name: Server name.
             version: Server version.
+            management_surfaces: [aiperceivable/apcore-mcp#16 Phase A]
+                Optional ``{"health": bool, "usage": bool, "manifest": bool,
+                "control": bool}`` -- when any value is true, the
+                ``com.aiperceivable/management`` extension capability is
+                advertised in ``initialize``'s ``capabilities`` with
+                ``surfaces`` listing only the true keys (stable order:
+                health, usage, manifest, control). A client that ignores
+                this capability keeps working exactly as before -- it is
+                purely additive discovery, not a behaviour gate. ``None`` or
+                all-false omits the capability entirely, matching pre-#16
+                behaviour.
 
         Returns:
             InitializationOptions ready for server.run().
         """
+        capabilities = server.get_capabilities(
+            # [A-D-FA-1] resources_changed must be advertised explicitly:
+            # NotificationOptions defaults it to False, which surfaced as
+            # `resources: {listChanged: false}` in the initialize response
+            # and stopped clients from subscribing to
+            # notifications/resources/list_changed. TypeScript declares
+            # `resources: { listChanged: true }` (factory.ts:131) and Rust
+            # returns ResourcesCapability { list_changed: true }
+            # (factory.rs:690).
+            notification_options=NotificationOptions(tools_changed=True, resources_changed=True),
+            experimental_capabilities={},
+        )
+
+        if management_surfaces:
+            surfaces = [key for key in _MANAGEMENT_SURFACE_ORDER if management_surfaces.get(key)]
+            if surfaces:
+                # `ServerCapabilities` declares `model_config = ConfigDict(extra="allow")`,
+                # so setting an undeclared attribute is a supported way to add a
+                # top-level capability key this MCP SDK version has no dedicated
+                # field for -- it round-trips through model_dump()/model_dump_json()
+                # like any other field.
+                capabilities.extensions = {  # type: ignore[attr-defined]
+                    _MANAGEMENT_EXTENSION_KEY: {
+                        "surfaces": surfaces,
+                        "protocolVersion": _PROTOCOL_SPEC_VERSION,
+                    }
+                }
+
         return InitializationOptions(
             server_name=name,
             server_version=version,
-            capabilities=server.get_capabilities(
-                # [A-D-FA-1] resources_changed must be advertised explicitly:
-                # NotificationOptions defaults it to False, which surfaced as
-                # `resources: {listChanged: false}` in the initialize response
-                # and stopped clients from subscribing to
-                # notifications/resources/list_changed. TypeScript declares
-                # `resources: { listChanged: true }` (factory.ts:131) and Rust
-                # returns ResourcesCapability { list_changed: true }
-                # (factory.rs:690).
-                notification_options=NotificationOptions(tools_changed=True, resources_changed=True),
-                experimental_capabilities={},
-            ),
+            capabilities=capabilities,
         )

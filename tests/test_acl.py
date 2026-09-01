@@ -224,3 +224,108 @@ def test_apcore_mcp_caller_acl_overrides_config_bus():
     if acl_value is None:
         acl_value = getattr(mcp._executor, "_acl", None)
     assert acl_value is explicit_acl
+
+
+# ---------------------------------------------------------------------------
+# aiperceivable/apcore-mcp#14 — `approval` rule field (apcore>=0.28.0 §6.1.6)
+# ---------------------------------------------------------------------------
+
+
+def test_rule_approval_required_is_accepted():
+    """A rule with `approval: required` builds and carries the value through."""
+    acl = build_acl_from_config(
+        {
+            "rules": [
+                {
+                    "callers": ["@external"],
+                    "targets": ["system.control.*"],
+                    "effect": "allow",
+                    "approval": "required",
+                },
+            ]
+        }
+    )
+    assert acl is not None
+    assert acl.rules[0].approval == "required"
+
+
+def test_rule_approval_not_required_is_accepted():
+    """`approval: not_required` (the default value spelled out explicitly) builds cleanly."""
+    acl = build_acl_from_config(
+        {
+            "rules": [
+                {"callers": ["*"], "targets": ["*"], "effect": "allow", "approval": "not_required"},
+            ]
+        }
+    )
+    assert acl is not None
+    assert acl.rules[0].approval == "not_required"
+
+
+def test_rule_without_approval_key_defaults_to_not_required():
+    """Omitting `approval` entirely keeps ACLRule's own default (`not_required`)."""
+    acl = build_acl_from_config({"rules": [{"callers": ["*"], "targets": ["*"], "effect": "allow"}]})
+    assert acl is not None
+    assert acl.rules[0].approval == "not_required"
+
+
+def test_rule_approval_invalid_value_raises():
+    with pytest.raises(ValueError, match="'approval' must be 'required' or 'not_required'"):
+        build_acl_from_config(
+            {"rules": [{"callers": ["*"], "targets": ["*"], "effect": "allow", "approval": "maybe"}]}
+        )
+
+
+def test_rule_approval_required_on_deny_raises():
+    """`approval: required` + `effect: deny` is meaningless (spec §6.1.6) — apcore's own
+    ACLRule validation rejects it; the Config Bus builder does not duplicate that check."""
+    from apcore.errors import ACLRuleError
+
+    with pytest.raises(ACLRuleError):
+        build_acl_from_config(
+            {"rules": [{"callers": ["*"], "targets": ["*"], "effect": "deny", "approval": "required"}]}
+        )
+
+
+# ---------------------------------------------------------------------------
+# aiperceivable/apcore-mcp-python#8 — the issue #14 ACL template's `targets`
+# patterns must each match at least one module id actually registered by
+# apcore's `register_sys_modules`, so the shipped example is not aspirational.
+# ---------------------------------------------------------------------------
+
+
+def _acl_template_target_prefixes() -> list[str]:
+    """The `targets` patterns from the acl_builder module docstring's example,
+    with the trailing `*` stripped for prefix matching."""
+    return [
+        "system.health.",
+        "system.usage.",
+        "system.manifest.",
+        "system.control.",
+    ]
+
+
+def test_acl_template_targets_match_registered_sys_module_ids():
+    from apcore import Executor, Registry
+    from apcore.config import Config
+    from apcore.sys_modules.registration import register_sys_modules
+
+    registry = Registry()
+    executor = Executor(registry=registry)
+    config = Config(
+        data={
+            "sys_modules": {
+                "enabled": True,
+                "events": {"enabled": True, "subscribers": []},
+            },
+        }
+    )
+
+    register_sys_modules(registry=registry, executor=executor, config=config)
+
+    registered_ids = list(registry.list(visibility=["public", "hidden"]))
+    assert registered_ids, "register_sys_modules registered no modules — test setup is broken"
+
+    for prefix in _acl_template_target_prefixes():
+        matches = [mid for mid in registered_ids if mid.startswith(prefix)]
+        assert matches, f"ACL template target prefix {prefix!r} matched no registered module id in {registered_ids}"

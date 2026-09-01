@@ -6,8 +6,9 @@ import pytest
 from mcp import types as mcp_types
 from mcp.server.lowlevel import Server
 from mcp.server.models import InitializationOptions
+from pydantic import AnyUrl
 
-from apcore_mcp.server.factory import MCPServerFactory
+from apcore_mcp.server.factory import MCPServerFactory, is_readonly_system_module
 from tests.conftest import ModuleAnnotations, ModuleDescriptor
 
 # ---------------------------------------------------------------------------
@@ -649,6 +650,57 @@ class TestBuildInitOptions:
         assert opts.capabilities.resources.listChanged is True
 
 
+class TestBuildInitOptionsManagementExtension:
+    """[aiperceivable/apcore-mcp#16 Phase A] `com.aiperceivable/management` capability."""
+
+    def _opts(self, management_surfaces=None):
+        factory = MCPServerFactory()
+        server = factory.create_server(name="test-server", version="1.2.3")
+        factory.register_handlers(server, [], type("R", (), {"handle_call": None})())
+        return factory.build_init_options(
+            server, name="test-server", version="1.2.3", management_surfaces=management_surfaces
+        )
+
+    def test_no_management_surfaces_omits_extension(self) -> None:
+        opts = self._opts(None)
+        assert not hasattr(opts.capabilities, "extensions") or opts.capabilities.model_dump(
+            exclude_none=True
+        ).get("extensions") is None
+
+    def test_all_false_omits_extension(self) -> None:
+        opts = self._opts({"health": False, "usage": False, "manifest": False, "control": False})
+        dumped = opts.capabilities.model_dump(exclude_none=True)
+        assert "extensions" not in dumped
+
+    def test_single_true_surface_is_advertised(self) -> None:
+        opts = self._opts({"health": True, "usage": False, "manifest": False, "control": False})
+        dumped = opts.capabilities.model_dump(exclude_none=True)
+        ext = dumped["extensions"]["com.aiperceivable/management"]
+        assert ext["surfaces"] == ["health"]
+        assert ext["protocolVersion"]
+
+    def test_surfaces_are_emitted_in_stable_order(self) -> None:
+        # Pass keys out of order -- output order must not depend on input order.
+        opts = self._opts({"control": True, "health": True, "manifest": True, "usage": True})
+        dumped = opts.capabilities.model_dump(exclude_none=True)
+        ext = dumped["extensions"]["com.aiperceivable/management"]
+        assert ext["surfaces"] == ["health", "usage", "manifest", "control"]
+
+    def test_partial_surfaces_only_true_ones_listed(self) -> None:
+        opts = self._opts({"health": True, "usage": True, "manifest": False, "control": False})
+        dumped = opts.capabilities.model_dump(exclude_none=True)
+        ext = dumped["extensions"]["com.aiperceivable/management"]
+        assert ext["surfaces"] == ["health", "usage"]
+
+    def test_client_ignoring_extension_still_sees_all_other_capabilities(self) -> None:
+        """A client that does not understand the extension still gets a normal,
+        fully-functional initialize response -- this is purely additive discovery."""
+        opts_with = self._opts({"health": True})
+        opts_without = self._opts(None)
+        assert opts_with.capabilities.tools == opts_without.capabilities.tools
+        assert opts_with.server_name == opts_without.server_name
+
+
 class TestADFA2PerCallStrict:
     """[A-D-FA-2] build_tool's strict argument reaches the local converter.
 
@@ -714,3 +766,268 @@ class TestRichDescription:
         factory = MCPServerFactory(rich_description=True)
         tool = factory.build_tool(simple_descriptor)
         assert tool.description == simple_descriptor.description
+
+
+# ---------------------------------------------------------------------------
+# aiperceivable/apcore-mcp#15 — system.* readonly modules are resources, not tools
+# ---------------------------------------------------------------------------
+
+
+class TestIsReadonlySystemModule:
+    """Tests for the module_id-prefix classifier."""
+
+    @pytest.mark.parametrize(
+        "module_id",
+        [
+            "system.health.summary",
+            "system.health.module",
+            "system.usage.summary",
+            "system.usage.module",
+            "system.manifest.full",
+            "system.manifest.module",
+        ],
+    )
+    def test_readonly_prefixes_are_classified_readonly(self, module_id: str) -> None:
+        assert is_readonly_system_module(module_id) is True
+
+    @pytest.mark.parametrize(
+        "module_id",
+        [
+            "system.control.update_config",
+            "system.control.reload_module",
+            "system.control.toggle_feature",
+            "image.resize",
+            "system.ping",
+        ],
+    )
+    def test_write_and_non_system_modules_are_not_readonly(self, module_id: str) -> None:
+        assert is_readonly_system_module(module_id) is False
+
+
+class StubRouter:
+    """A minimal router stub recording every dispatched call."""
+
+    def __init__(self, *, error: bool = False, error_text: str = "error") -> None:
+        self.calls: list[tuple[str, dict]] = []
+        self._error = error
+        self._error_text = error_text
+
+    async def handle_call(self, name, arguments, extra=None):
+        self.calls.append((name, dict(arguments)))
+        if self._error:
+            return ([{"type": "text", "text": self._error_text}], True, None)
+        return ([{"type": "text", "text": '{"ok": true}'}], False, None)
+
+
+def _system_registry() -> StubRegistry:
+    return StubRegistry(
+        [
+            ModuleDescriptor(
+                module_id="system.health.summary", description="d", input_schema={}, output_schema={}
+            ),
+            ModuleDescriptor(module_id="system.health.module", description="d", input_schema={}, output_schema={}),
+            ModuleDescriptor(module_id="system.usage.summary", description="d", input_schema={}, output_schema={}),
+            ModuleDescriptor(module_id="system.usage.module", description="d", input_schema={}, output_schema={}),
+            ModuleDescriptor(module_id="system.manifest.full", description="d", input_schema={}, output_schema={}),
+            ModuleDescriptor(module_id="system.manifest.module", description="d", input_schema={}, output_schema={}),
+            ModuleDescriptor(
+                module_id="system.control.reload_module", description="d", input_schema={}, output_schema={}
+            ),
+            ModuleDescriptor(module_id="regular.tool", description="d", input_schema={}, output_schema={}),
+        ]
+    )
+
+
+class TestBuildToolsExcludesReadonlySystemModules:
+    @pytest.fixture
+    def factory(self) -> MCPServerFactory:
+        return MCPServerFactory()
+
+    def test_readonly_system_modules_are_not_tools(self, factory: MCPServerFactory) -> None:
+        tools = factory.build_tools(_system_registry())
+        names = {t.name for t in tools}
+        assert names == {"system.control.reload_module", "regular.tool"}
+
+
+class TestRegisterResourceHandlersSystemModules:
+    @pytest.fixture
+    def factory(self) -> MCPServerFactory:
+        return MCPServerFactory()
+
+    async def test_static_system_resources_listed(self, factory: MCPServerFactory) -> None:
+        server = factory.create_server()
+        factory.register_resource_handlers(server, _system_registry(), StubRouter())
+
+        handler = server.request_handlers[mcp_types.ListResourcesRequest]
+        result = (await handler(None)).root
+        uris = {str(r.uri) for r in result.resources}
+        assert "apcore://system.health.summary" in uris
+        assert "apcore://system.usage.summary" in uris
+        assert "apcore://system.manifest.full" in uris
+        # Module-scoped (template) ids and the write module must NOT appear here.
+        assert "apcore://system.health.module" not in uris
+        assert not any("system.control" in u for u in uris)
+
+    async def test_module_scoped_system_resources_listed_as_templates(self, factory: MCPServerFactory) -> None:
+        server = factory.create_server()
+        factory.register_resource_handlers(server, _system_registry(), StubRouter())
+
+        handler = server.request_handlers[mcp_types.ListResourceTemplatesRequest]
+        result = (await handler(None)).root
+        templates = {t.uriTemplate for t in result.resourceTemplates}
+        assert "apcore://system.health.module/{module_id}" in templates
+        # [aiperceivable/apcore-mcp#15] only `system.usage.module` takes the
+        # optional `?period=` query param; cross-checked against
+        # apcore-mcp-typescript's `systemResourceUriTemplate()`, which emits
+        # the same `{?period}` suffix for this module and none of the others.
+        assert "apcore://system.usage.module/{module_id}{?period}" in templates
+        assert "apcore://system.manifest.module/{module_id}" in templates
+
+    async def test_read_static_summary_resource_dispatches_through_router(self, factory: MCPServerFactory) -> None:
+        server = factory.create_server()
+        router = StubRouter()
+        factory.register_resource_handlers(server, _system_registry(), router)
+
+        handler = server.request_handlers[mcp_types.ReadResourceRequest]
+        request = mcp_types.ReadResourceRequest(
+            params=mcp_types.ReadResourceRequestParams(uri=AnyUrl("apcore://system.health.summary")),
+        )
+        result = (await handler(request)).root
+        assert result.contents[0].text == '{"ok": true}'
+        assert result.contents[0].mimeType == "application/json"
+        assert router.calls == [("system.health.summary", {})]
+
+    async def test_read_usage_summary_forwards_period_query_param(self, factory: MCPServerFactory) -> None:
+        server = factory.create_server()
+        router = StubRouter()
+        factory.register_resource_handlers(server, _system_registry(), router)
+
+        handler = server.request_handlers[mcp_types.ReadResourceRequest]
+        request = mcp_types.ReadResourceRequest(
+            params=mcp_types.ReadResourceRequestParams(uri=AnyUrl("apcore://system.usage.summary?period=7d")),
+        )
+        await handler(request)
+        assert router.calls == [("system.usage.summary", {"period": "7d"})]
+
+    async def test_read_module_scoped_resource_extracts_module_id(self, factory: MCPServerFactory) -> None:
+        server = factory.create_server()
+        router = StubRouter()
+        factory.register_resource_handlers(server, _system_registry(), router)
+
+        handler = server.request_handlers[mcp_types.ReadResourceRequest]
+        request = mcp_types.ReadResourceRequest(
+            params=mcp_types.ReadResourceRequestParams(
+                uri=AnyUrl("apcore://system.health.module/orders.create"),
+            ),
+        )
+        await handler(request)
+        assert router.calls == [("system.health.module", {"module_id": "orders.create"})]
+
+    async def test_read_usage_module_forwards_module_id_and_period(self, factory: MCPServerFactory) -> None:
+        server = factory.create_server()
+        router = StubRouter()
+        factory.register_resource_handlers(server, _system_registry(), router)
+
+        handler = server.request_handlers[mcp_types.ReadResourceRequest]
+        request = mcp_types.ReadResourceRequest(
+            params=mcp_types.ReadResourceRequestParams(
+                uri=AnyUrl("apcore://system.usage.module/orders.create?period=1h"),
+            ),
+        )
+        await handler(request)
+        assert router.calls == [("system.usage.module", {"module_id": "orders.create", "period": "1h"})]
+
+    async def test_read_module_scoped_resource_missing_module_id_raises(self, factory: MCPServerFactory) -> None:
+        server = factory.create_server()
+        factory.register_resource_handlers(server, _system_registry(), StubRouter())
+
+        handler = server.request_handlers[mcp_types.ReadResourceRequest]
+        request = mcp_types.ReadResourceRequest(
+            params=mcp_types.ReadResourceRequestParams(uri=AnyUrl("apcore://system.health.module")),
+        )
+        with pytest.raises(ValueError, match="Resource not found"):
+            await handler(request)
+
+    async def test_read_unknown_system_resource_raises(self, factory: MCPServerFactory) -> None:
+        server = factory.create_server()
+        factory.register_resource_handlers(server, _system_registry(), StubRouter())
+
+        handler = server.request_handlers[mcp_types.ReadResourceRequest]
+        request = mcp_types.ReadResourceRequest(
+            params=mcp_types.ReadResourceRequestParams(uri=AnyUrl("apcore://system.nonexistent.thing")),
+        )
+        with pytest.raises(ValueError, match="Resource not found"):
+            await handler(request)
+
+    async def test_router_error_surfaces_as_resource_not_found_style_error(self, factory: MCPServerFactory) -> None:
+        server = factory.create_server()
+        router = StubRouter(error=True, error_text="Access denied: @external -> system.health.summary")
+        factory.register_resource_handlers(server, _system_registry(), router)
+
+        handler = server.request_handlers[mcp_types.ReadResourceRequest]
+        request = mcp_types.ReadResourceRequest(
+            params=mcp_types.ReadResourceRequestParams(uri=AnyUrl("apcore://system.health.summary")),
+        )
+        with pytest.raises(ValueError, match="Access denied"):
+            await handler(request)
+
+    async def test_no_router_means_no_system_resources_registered(self, factory: MCPServerFactory) -> None:
+        """Without a router, system.* resources are skipped entirely (docs:// unaffected)."""
+        server = factory.create_server()
+        factory.register_resource_handlers(server, _system_registry(), None)
+
+        list_handler = server.request_handlers[mcp_types.ListResourcesRequest]
+        result = (await list_handler(None)).root
+        assert result.resources == []
+        assert mcp_types.ListResourceTemplatesRequest not in server.request_handlers
+
+    async def test_readonly_module_absent_from_registry_gets_no_resource(self, factory: MCPServerFactory) -> None:
+        """Only module ids the registry actually holds get a resource (no aspirational entries)."""
+        registry = StubRegistry(
+            [
+                ModuleDescriptor(
+                    module_id="system.health.summary", description="d", input_schema={}, output_schema={}
+                ),
+            ]
+        )
+        server = factory.create_server()
+        factory.register_resource_handlers(server, registry, StubRouter())
+
+        list_handler = server.request_handlers[mcp_types.ListResourcesRequest]
+        result = (await list_handler(None)).root
+        uris = {str(r.uri) for r in result.resources}
+        assert uris == {"apcore://system.health.summary"}
+        # No manifest/usage modules registered -> no templates handler at all.
+        assert mcp_types.ListResourceTemplatesRequest not in server.request_handlers
+
+    async def test_docs_resources_unaffected_by_system_resource_support(self, factory: MCPServerFactory) -> None:
+        """Existing docs:// behaviour keeps working alongside the new apcore:// resources."""
+        registry = StubRegistry(
+            [
+                ModuleDescriptor(
+                    module_id="mod.documented",
+                    description="A documented module",
+                    input_schema={},
+                    output_schema={},
+                    documentation="Some docs",
+                ),
+                ModuleDescriptor(
+                    module_id="system.health.summary", description="d", input_schema={}, output_schema={}
+                ),
+            ]
+        )
+        server = factory.create_server()
+        factory.register_resource_handlers(server, registry, StubRouter())
+
+        list_handler = server.request_handlers[mcp_types.ListResourcesRequest]
+        result = (await list_handler(None)).root
+        uris = {str(r.uri) for r in result.resources}
+        assert "docs://mod.documented" in uris
+        assert "apcore://system.health.summary" in uris
+
+        read_handler = server.request_handlers[mcp_types.ReadResourceRequest]
+        request = mcp_types.ReadResourceRequest(
+            params=mcp_types.ReadResourceRequestParams(uri=AnyUrl("docs://mod.documented")),
+        )
+        result2 = (await read_handler(request)).root
+        assert result2.contents[0].text == "Some docs"

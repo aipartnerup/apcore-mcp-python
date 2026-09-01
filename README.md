@@ -569,6 +569,22 @@ serve(executor)
 tools = to_openai_tools(executor)
 ```
 
+> **Security note — `system.*` management modules.** Enabling apcore's
+> `sys_modules.enabled` config registers `system.health.*` / `system.usage.*`
+> / `system.manifest.*` (exposed here as MCP resources) and
+> `system.control.*` (exposed as tools) into the registry this server
+> serves — but enabling it does **not** by itself protect them. Without a
+> configured `mcp.acl` (or `acl=`) section, `apcore.ACL.discover()` finds no
+> `acl/` directory and returns `None`, which is indistinguishable from "no
+> ACL was ever configured": every caller can read health/usage/manifest and,
+> more importantly, invoke `system.control.*` (reload modules, change
+> runtime config, toggle features). Always pair `sys_modules.enabled: true`
+> with an `mcp.acl` section — see the worked example in
+> `apcore_mcp.acl_builder`'s module docstring
+> (aiperceivable/apcore-mcp#14/#15). `serve()`/`async_serve()` log a startup
+> WARNING via `executor.governance_state()` when this gap is detected, but
+> the server still starts — the warning is advisory only.
+
 ## Features
 
 - **Auto-discovery** — all modules in the extensions directory are found and exposed automatically
