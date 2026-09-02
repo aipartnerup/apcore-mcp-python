@@ -663,9 +663,10 @@ class TestBuildInitOptionsManagementExtension:
 
     def test_no_management_surfaces_omits_extension(self) -> None:
         opts = self._opts(None)
-        assert not hasattr(opts.capabilities, "extensions") or opts.capabilities.model_dump(
-            exclude_none=True
-        ).get("extensions") is None
+        assert (
+            not hasattr(opts.capabilities, "extensions")
+            or opts.capabilities.model_dump(exclude_none=True).get("extensions") is None
+        )
 
     def test_all_false_omits_extension(self) -> None:
         opts = self._opts({"health": False, "usage": False, "manifest": False, "control": False})
@@ -803,6 +804,28 @@ class TestIsReadonlySystemModule:
     def test_write_and_non_system_modules_are_not_readonly(self, module_id: str) -> None:
         assert is_readonly_system_module(module_id) is False
 
+    @pytest.mark.parametrize(
+        "module_id",
+        [
+            # A seventh read-only module a future apcore might add, and one a
+            # host could register through `register_internal` itself.
+            "system.health.history",
+            "system.usage.trend",
+            "system.manifest.diff",
+        ],
+    )
+    def test_unrecognised_readonly_system_module_stays_a_tool(self, module_id: str) -> None:
+        """An id this adapter has no resource for MUST NOT be dropped from tools.
+
+        `register_resource_handlers` builds resources from the six canonical
+        ids, so a bare prefix match here would remove such a module from
+        `tools/list` while giving it no resource either — it would disappear
+        from both discovery surfaces at once. Classifying it as a tool is the
+        safer failure: visible and callable until this adapter learns its
+        resource shape.
+        """
+        assert is_readonly_system_module(module_id) is False
+
 
 class StubRouter:
     """A minimal router stub recording every dispatched call."""
@@ -822,9 +845,7 @@ class StubRouter:
 def _system_registry() -> StubRegistry:
     return StubRegistry(
         [
-            ModuleDescriptor(
-                module_id="system.health.summary", description="d", input_schema={}, output_schema={}
-            ),
+            ModuleDescriptor(module_id="system.health.summary", description="d", input_schema={}, output_schema={}),
             ModuleDescriptor(module_id="system.health.module", description="d", input_schema={}, output_schema={}),
             ModuleDescriptor(module_id="system.usage.summary", description="d", input_schema={}, output_schema={}),
             ModuleDescriptor(module_id="system.usage.module", description="d", input_schema={}, output_schema={}),
@@ -985,9 +1006,7 @@ class TestRegisterResourceHandlersSystemModules:
         """Only module ids the registry actually holds get a resource (no aspirational entries)."""
         registry = StubRegistry(
             [
-                ModuleDescriptor(
-                    module_id="system.health.summary", description="d", input_schema={}, output_schema={}
-                ),
+                ModuleDescriptor(module_id="system.health.summary", description="d", input_schema={}, output_schema={}),
             ]
         )
         server = factory.create_server()
@@ -1011,9 +1030,7 @@ class TestRegisterResourceHandlersSystemModules:
                     output_schema={},
                     documentation="Some docs",
                 ),
-                ModuleDescriptor(
-                    module_id="system.health.summary", description="d", input_schema={}, output_schema={}
-                ),
+                ModuleDescriptor(module_id="system.health.summary", description="d", input_schema={}, output_schema={}),
             ]
         )
         server = factory.create_server()

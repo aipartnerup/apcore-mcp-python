@@ -46,11 +46,21 @@ def real_registry() -> Registry:
 
 
 def test_control_modules_are_tools(real_registry: Registry) -> None:
-    tools = MCPServerFactory().build_tools(real_registry)
-    tool_names = {t.name for t in tools}
+    """The `system.*` tool set must equal the fixture's exactly — not merely contain it.
 
-    for expected in _FIXTURE["tools"]:
-        assert expected["name"] in tool_names, f"{expected['module_id']} missing from tools/list"
+    A subset assertion would let an adapter emit an *extra* management tool and
+    still pass, which is the divergence direction this fixture exists to catch
+    (aiperceivable/apcore-mcp#15 asks for byte-identical `tools/list` across the
+    three bridges, not "at least these").
+    """
+    tools = MCPServerFactory().build_tools(real_registry)
+    system_tool_names = {t.name for t in tools if t.name.startswith("system.")}
+    expected = {t["name"] for t in _FIXTURE["tools"]}
+
+    assert system_tool_names == expected, (
+        f"system.* tools/list set mismatch\n  extra:   {sorted(system_tool_names - expected)}"
+        f"\n  missing: {sorted(expected - system_tool_names)}"
+    )
 
 
 def test_readonly_system_modules_are_not_tools(real_registry: Registry) -> None:
@@ -67,16 +77,23 @@ async def test_readonly_system_modules_are_resources_and_templates(real_registry
 
     list_resources = server.request_handlers[factory_module.mcp_types.ListResourcesRequest]
     resources = (await list_resources(None)).root.resources
-    resource_uris = {str(r.uri) for r in resources}
+    # Only the `apcore://` scheme is this fixture's contract; `docs://` resources
+    # legitimately vary with how many registered modules carry documentation.
+    apcore_uris = {str(r.uri) for r in resources if str(r.uri).startswith("apcore://")}
+    expected_uris = {r["uri"] for r in _FIXTURE["resources"]}
 
-    for expected in _FIXTURE["resources"]:
-        assert expected["uri"] in resource_uris, f"{expected['module_id']} missing from resources/list"
+    assert apcore_uris == expected_uris, (
+        f"apcore:// resources/list set mismatch\n  extra:   {sorted(apcore_uris - expected_uris)}"
+        f"\n  missing: {sorted(expected_uris - apcore_uris)}"
+    )
 
     list_templates = server.request_handlers[factory_module.mcp_types.ListResourceTemplatesRequest]
     templates = (await list_templates(None)).root.resourceTemplates
-    template_uris = {t.uriTemplate for t in templates}
+    template_uris = {t.uriTemplate for t in templates if t.uriTemplate.startswith("apcore://")}
+    expected_templates = {t["uri_template"] for t in _FIXTURE["resource_templates"]}
 
-    for expected in _FIXTURE["resource_templates"]:
-        assert (
-            expected["uri_template"] in template_uris
-        ), f"{expected['module_id']} missing from resources/templates/list (got {template_uris})"
+    assert template_uris == expected_templates, (
+        f"apcore:// resources/templates/list set mismatch"
+        f"\n  extra:   {sorted(template_uris - expected_templates)}"
+        f"\n  missing: {sorted(expected_templates - template_uris)}"
+    )

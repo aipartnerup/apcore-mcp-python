@@ -65,15 +65,33 @@ _SYSTEM_TEMPLATE_RESOURCE_IDS = (
 _SYSTEM_TEMPLATE_QUERY_SUFFIX = {"system.usage.module": "{?period}"}
 
 
+# The read-only management modules this adapter actually projects as
+# resources. Membership in this set -- not a bare prefix match -- is what
+# removes a module from `tools/list`; see `is_readonly_system_module`.
+_SYSTEM_RESOURCE_IDS = frozenset(_SYSTEM_STATIC_RESOURCE_IDS + _SYSTEM_TEMPLATE_RESOURCE_IDS)
+
+
 def is_readonly_system_module(module_id: str) -> bool:
-    """Return True when *module_id* is a read-only `system.*` management module.
+    """Return True when *module_id* is projected as an MCP resource, not a tool.
 
     Per aiperceivable/apcore-mcp#15, `system.health.*`, `system.usage.*` and
     `system.manifest.*` are read-only and MUST be projected as MCP resources
     rather than tools. `system.control.*` performs writes and is unaffected --
     it is not matched here and keeps its normal Tool projection.
+
+    Matches the six canonical ids exactly rather than the three prefixes. The
+    two agree for every registry `register_sys_modules` produces, and differ
+    only for a read-only `system.*` id this adapter has no resource for --
+    a seventh module added by a future apcore, or one a host registered
+    through `register_internal` itself. A prefix match would drop such a
+    module from `tools/list` while `register_resource_handlers` (which builds
+    from these same canonical ids) gave it no resource either, so it would
+    vanish from both discovery surfaces at once. Keeping it a tool is the
+    safer failure: visible and callable, merely classified as a tool until
+    this adapter learns its resource shape. Discovery is all that is at stake
+    -- `tools/call` dispatches by id and never consulted this list.
     """
-    return module_id.startswith(_READONLY_SYSTEM_PREFIXES)
+    return module_id in _SYSTEM_RESOURCE_IDS
 
 
 # aiperceivable/apcore-mcp#16 Phase A -- the `com.aiperceivable/management`
@@ -546,9 +564,7 @@ class MCPServerFactory:
         # future SDK exposing a subset) would advertise a resource that 404s
         # on every read.
         static_system_ids = [mid for mid in _SYSTEM_STATIC_RESOURCE_IDS if mid in registered_ids] if router else []
-        template_system_ids = (
-            [mid for mid in _SYSTEM_TEMPLATE_RESOURCE_IDS if mid in registered_ids] if router else []
-        )
+        template_system_ids = [mid for mid in _SYSTEM_TEMPLATE_RESOURCE_IDS if mid in registered_ids] if router else []
 
         @server.list_resources()
         async def handle_list_resources() -> list[mcp_types.Resource]:
@@ -595,9 +611,7 @@ class MCPServerFactory:
             docs_prefix = "docs://"
             system_prefix = f"{_SYSTEM_RESOURCE_SCHEME}://system."
             if uri_str.startswith(system_prefix):
-                return await self._read_system_resource(
-                    uri, uri_str, router, static_system_ids, template_system_ids
-                )
+                return await self._read_system_resource(uri, uri_str, router, static_system_ids, template_system_ids)
             if not uri_str.startswith(docs_prefix):
                 raise ValueError(f"Unsupported URI scheme: {uri_str}")
             module_id = uri_str[len(docs_prefix) :]

@@ -137,9 +137,7 @@ class TestWarnIfUnprotectedControlSurface:
         assert "UNPROTECTED MANAGEMENT SURFACE" not in caplog.text
 
     def test_acl_wired_but_gate_missing_names_the_right_gap(self, caplog: pytest.LogCaptureFixture) -> None:
-        executor = StubExecutorWithGovernance(
-            _fake_governance_state(acl_configured=True, builtin_acl_gate_wired=False)
-        )
+        executor = StubExecutorWithGovernance(_fake_governance_state(acl_configured=True, builtin_acl_gate_wired=False))
         with caplog.at_level(logging.WARNING, logger="apcore_mcp.apcore_mcp"):
             _warn_if_unprotected_control_surface(executor)
         assert "does not include the built-in ACL gate" in caplog.text

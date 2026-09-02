@@ -271,9 +271,7 @@ def test_rule_without_approval_key_defaults_to_not_required():
 
 def test_rule_approval_invalid_value_raises():
     with pytest.raises(ValueError, match="'approval' must be 'required' or 'not_required'"):
-        build_acl_from_config(
-            {"rules": [{"callers": ["*"], "targets": ["*"], "effect": "allow", "approval": "maybe"}]}
-        )
+        build_acl_from_config({"rules": [{"callers": ["*"], "targets": ["*"], "effect": "allow", "approval": "maybe"}]})
 
 
 def test_rule_approval_required_on_deny_raises():
