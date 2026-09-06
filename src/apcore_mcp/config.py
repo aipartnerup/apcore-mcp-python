@@ -27,6 +27,16 @@ MCP_DEFAULTS: dict[str, object] = {
     # Declarative ACL — {default_effect: "deny"|"allow", rules: [ACLRule...]}.
     # Empty / null means "no ACL" (allow all). See acl_builder.build_acl_from_config.
     "acl": None,
+    # OpenAPI backend — {spec, base_url, prefix, include, exclude,
+    # include_deprecated, timeout, headers, acknowledge_unapproved_writes}.
+    #
+    # `spec` is the FIRST path-typed key in this namespace, and apcore 0.30.0's
+    # protections for path-typed keys do not reach it: `Config.path_typed_keys()`
+    # is a hardcoded tuple of apcore's own four keys and never consults a
+    # namespace registered here, and the §9.2.1 requirement-5 empty-value
+    # discard is gated on that same set. `openapi_backend.resolve_spec_location`
+    # owns the three rules instead — see that module's docstring.
+    "openapi": None,
 }
 
 

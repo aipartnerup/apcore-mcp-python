@@ -22,12 +22,44 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Launch an MCP server that exposes apcore modules as tools.",
     )
 
-    # Required
+    # Backend sources. AT LEAST ONE is required; the two may be combined, and
+    # combining them additionally requires --openapi-prefix so the two ID
+    # spaces cannot collide. Enforced in main() rather than by argparse,
+    # because argparse cannot express "at least one of these two".
     parser.add_argument(
         "--extensions-dir",
-        required=True,
         type=Path,
-        help="Path to apcore extensions directory.",
+        help="Path to apcore extensions directory. Required unless --from-openapi is given.",
+    )
+    parser.add_argument(
+        "--from-openapi",
+        dest="from_openapi",
+        help="OpenAPI 3.0/3.1 spec URL or path — serve a remote API as MCP tools.",
+    )
+    parser.add_argument(
+        "--openapi-base-url",
+        dest="openapi_base_url",
+        help="Base URL for proxied requests (default: the document's servers[0].url).",
+    )
+    parser.add_argument(
+        "--openapi-prefix",
+        dest="openapi_prefix",
+        help="Prepended to every derived module ID. Required when combined with --extensions-dir.",
+    )
+    parser.add_argument("--openapi-include", dest="openapi_include", help="Scanner include filter.")
+    parser.add_argument("--openapi-exclude", dest="openapi_exclude", help="Scanner exclude filter.")
+    parser.add_argument(
+        "--openapi-header",
+        dest="openapi_headers",
+        action="append",
+        metavar="KEY:VALUE",
+        help="Header for the SPEC FETCH only, repeatable. Never sent with proxied calls.",
+    )
+    parser.add_argument(
+        "--openapi-no-deprecated",
+        dest="openapi_no_deprecated",
+        action="store_true",
+        help="Skip operations marked deprecated: true.",
     )
 
     # Transport options
@@ -185,20 +217,35 @@ def main() -> None:
     # Validate port range (argparse only validates type, not range)
     _validate_port(args.port, parser)
 
-    # Validate --extensions-dir exists and is a directory
-    extensions_dir: Path = args.extensions_dir
-    if not extensions_dir.exists():
+    # Backend-source rule: at least one, both allowed, both requires a prefix.
+    extensions_dir: Path | None = args.extensions_dir
+    if extensions_dir is None and not args.from_openapi:
         print(
-            f"Error: --extensions-dir '{extensions_dir}' does not exist.",
+            "Error: a backend source is required — pass --extensions-dir, --from-openapi, or both.",
             file=sys.stderr,
         )
-        sys.exit(1)
-    if not extensions_dir.is_dir():
+        sys.exit(2)
+    if extensions_dir is not None and args.from_openapi and not args.openapi_prefix:
         print(
-            f"Error: --extensions-dir '{extensions_dir}' is not a directory.",
+            "Error: --openapi-prefix is required when --extensions-dir and --from-openapi are "
+            "combined, so the two module-ID spaces cannot collide.",
             file=sys.stderr,
         )
-        sys.exit(1)
+        sys.exit(2)
+
+    if extensions_dir is not None:
+        if not extensions_dir.exists():
+            print(
+                f"Error: --extensions-dir '{extensions_dir}' does not exist.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not extensions_dir.is_dir():
+            print(
+                f"Error: --extensions-dir '{extensions_dir}' is not a directory.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     # Validate name length
     if len(args.name) > 255:
@@ -214,14 +261,45 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    # Create Registry and discover modules
-    registry = Registry(extensions_dir=str(extensions_dir))
-    num_modules = registry.discover()
-
-    if num_modules == 0:
-        logger.warning("No modules discovered in '%s'.", extensions_dir)
+    # Create Registry. The union is assembled in a fixed order — extensions
+    # directory first, then OpenAPI operations — so a collision report names
+    # the OpenAPI side, which is the one the operator can rename with a prefix.
+    if extensions_dir is not None:
+        registry = Registry(extensions_dir=str(extensions_dir))
+        num_modules = registry.discover()
+        if num_modules == 0:
+            logger.warning("No modules discovered in '%s'.", extensions_dir)
+        else:
+            logger.info("Discovered %d module(s) in '%s'.", num_modules, extensions_dir)
     else:
-        logger.info("Discovered %d module(s) in '%s'.", num_modules, extensions_dir)
+        registry = Registry()
+
+    if args.from_openapi:
+        from apcore_mcp.openapi_backend import openapi_backend
+
+        headers: dict[str, str] = {}
+        for raw in args.openapi_headers or []:
+            key, _, value = raw.partition(":")
+            if not _:
+                print(f"Error: --openapi-header must be KEY:VALUE, got {raw!r}.", file=sys.stderr)
+                sys.exit(2)
+            headers[key.strip()] = value.strip()
+
+        try:
+            openapi_backend(
+                args.from_openapi,
+                base_url=args.openapi_base_url,
+                prefix=args.openapi_prefix,
+                include=args.openapi_include,
+                exclude=args.openapi_exclude,
+                include_deprecated=not args.openapi_no_deprecated,
+                headers=headers or None,
+                registry=registry,
+                has_other_backend_source=extensions_dir is not None,
+            )
+        except (ValueError, RuntimeError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
 
     # Resolve JWT key: --jwt-key-file → --jwt-secret → APCORE_JWT_SECRET env var
     jwt_key: str | None = None

@@ -6,6 +6,125 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.20.0] - 2026-09-06
+
+Feature release: the **OpenAPI backend** — point the bridge at an OpenAPI 3.0/3.1 document and every
+operation becomes an MCP tool, proxied over HTTP, with no apcore project on the other end — plus the
+`mcp.acl` half of apcore 0.29.0's PROTOCOL_SPEC §6.2.1 pattern-array closure. Raises the required
+`apcore` floor to `0.30.0` and the `apcore-toolkit` floor to `0.11.1`. 1015 tests pass.
+
+### Added
+
+- **`apcore_mcp.openapi_backend` — a third backend source.** `openapi_backend(spec, **options)`
+  composes apcore-toolkit's shipped pieces (`load_spec` → `OpenAPIScanner.scan` →
+  `HTTPProxyRegistryWriter.write`) into a populated `Registry` and hands it to the machinery this
+  bridge already has: no scanning logic, no schema conversion and no new execution path.
+  `APCoreMCP.from_openapi(spec, **options)` is the convenience constructor; `mcp.openapi` is the new
+  Config Bus section; and the CLI gains `--from-openapi`, `--openapi-base-url`, `--openapi-prefix`,
+  `--openapi-include`, `--openapi-exclude`, `--openapi-header` and `--openapi-no-deprecated`.
+  New `[openapi]` extra: `pip install 'apcore-mcp[openapi]'` (it resolves `apcore-toolkit[http-proxy]`,
+  which brings `httpx`; a missing toolkit raises with that install line rather than an `ImportError`).
+
+- **A module-ID projection, without which the backend serves nothing.** apcore-toolkit's
+  `derive_module_id` sanitizes to `[A-Za-z0-9_.-]`; apcore's registry accepts only
+  `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$` and enforces it at `Registry.register` **and** at
+  `Executor.call`. Of nine realistic operation shapes only two register unrepaired, and the
+  canonical Swagger Petstore (`listPets`, `createPets`, `showPetById`) is entirely in the rejected
+  set — measured end-to-end, it scans cleanly, fails registration on every operation as a per-module
+  `WriteResult`, and yields an **empty registry**. `project_module_id` lowercases and maps `-` to
+  `_`; a segment that still does not begin with a lowercase letter (`/v1/2fa`) is **skipped with a
+  WARNING** rather than repaired, because completing it means inventing a character — a naming
+  decision that belongs to the operator's own `derive_module_id` / `transform_module` hook. The
+  projection runs after any caller hook (so *every registered ID is apcore-legal* holds
+  unconditionally) and before the scanner's `deduplicate_ids` (because lowercasing can create a
+  collision the document did not have).
+
+- **A pre-write collision preflight.** The full derived-ID set is intersected against the target
+  registry before `HTTPProxyRegistryWriter.write` is called; a non-empty intersection fails startup
+  naming **every** colliding ID, having written nothing. Without it a duplicate arrives as one
+  failed `WriteResult`, is logged at ERROR, and leaves a **partial registry** — a tool the document
+  advertises, absent from `tools/list`, with one log line as the only notice. `prefix` is separately
+  mandatory when the OpenAPI backend is combined with another backend source; it is naming hygiene,
+  not the collision defence.
+
+- **A startup warning that nothing will ask for approval before a write.** The toolkit infers
+  annotations from the HTTP method alone and never infers `requires_approval`, so every scanned
+  module arrives with it `False`: a `POST /charges` that moves money is annotated exactly like a
+  `POST /echo`. The warning reports the **absence of an approval path, never the presence of
+  protection** — the rule apcore states on `GovernanceState.unprotected_control_surface` (*"a wired
+  ACL that permits every call still yields False"*) — so an attached ACL does **not** suppress it.
+
+- **`_warn_acl_rules_that_protect_nothing` — the §6.2.1 tier-2 startup diagnostic.** `serve()` /
+  `async_serve()` now call `ACL.validate_rules()` once the registry is assembled and log each
+  finding at WARNING with the rule index and field. Closing the pattern-array *shape* does not
+  exhaust the inert class: `["$not", "*"]` has legal arity, exactly one operand, and matches
+  nothing — the identical fail-open through a well-formed array. Advisory only, on the same terms as
+  the unprotected-control-surface check beside it. No bridge called `validate_rules()` before this.
+
+### Changed
+
+- **`build_acl_from_config` validates in PROTOCOL_SPEC §6.2.1's normative order.** `effect` →
+  `approval` → `callers` → `targets`, with `default_effect` ahead of the rule loop and the
+  unknown-key check ahead of all four. This builder ran it in reverse, so a rule wrong in both
+  `effect` and `callers` was refused for `callers` here and for `effect` by apcore's own doors — the
+  same file, two answers, depending on which door it reached first.
+
+- **Required floors: `apcore>=0.30.0`, `apcore-toolkit>=0.11.1`.** apcore **0.29.0** is the
+  correctness floor — on 0.28.0 the pattern-array shapes below load silently and the deployment
+  believes it has a rule it does not have. apcore-toolkit **0.11.0** is the capability floor
+  (`OpenAPIScanner` does not exist below it, and it is where the Rust writer stopped rejecting
+  `HEAD`/`OPTIONS`/`TRACE`). apcore-toolkit **0.11.1** changes no API and exists to raise its own
+  apcore floor, which forces apcore **0.30.0** — independently needed for `Config.project_root`.
+
+### Fixed
+
+- **`ACLRuleError` escaped `build_acl_from_config` raw, in the wrong type and without the rule
+  index.** apcore raises it from inside `ACLRule.__post_init__` and its message names the *type* —
+  `ACLRule has an invalid 'targets' (PROTOCOL_SPEC §6.2.1): …` — which is correct for apcore, where
+  a rule under construction has no position, and useless to an operator holding a 20-rule YAML block
+  when the §6.2.1 closure's entire remedy is its message. It is also the wrong type: `ACLRuleError`
+  extends `ModuleError`, not `ValueError`, so this function's documented "raises ValueError on
+  malformed entries" contract was false for every §6.2.1 fault and a caller with `except ValueError:`
+  around startup silently stopped catching them. Now re-raised as `ValueError` prefixed
+  `mcp.acl.rules[i]` (`mcp.acl` for a section-scoped fault), apcore's message preserved verbatim
+  after the prefix and the original chained as `__cause__`.
+
+- **`mcp.openapi.spec` is path-typed and apcore 0.30.0's protections do not reach it.** Measured:
+  `Config.path_typed_keys()` returns a hardcoded tuple of apcore's own four keys and never consults
+  a namespace registered through `Config.register_namespace`, and the §9.2.1 requirement-5
+  empty-value discard is gated on that same set. So `APCORE_MCP_OPENAPI_SPEC=` would be an override
+  to `""`, resolving to the working directory — exactly the silent failure apcore closed for
+  `APCORE_ACL_ROOT=`, in a namespace the fix does not extend to. `resolve_spec_location` owns three
+  rules instead: an `http(s)://` value verbatim, a set-but-empty value discarded with a WARNING so
+  resolution falls through, and a relative path resolved against `Config.project_root` — §9.2.2's
+  *target* semantics, adopted immediately because this key has never shipped and owes no deprecation
+  window.
+
+### Upstream gaps found while implementing (reported, not worked around)
+
+- **`OpenAPIScanner` + `HTTPProxyRegistryWriter` cannot serve the reference spec the scanner was
+  verified against.** They are documented as an end-to-end pair; that verification asserted
+  byte-identical `ScannedModule` output across SDKs, which never exercised registrability. The
+  projection above is this bridge's local repair; the fix belongs in apcore-toolkit.
+- **`ScannedModule.metadata` never reaches the registered descriptor.** The writer calls
+  `registry.register(mod.module_id, module_instance)` with no `metadata=`, even though apcore's
+  `register` accepts one, and apcore exposes no way to attach metadata afterwards
+  (`get_module_metadata` reads; nothing writes). The proxy routes correctly — it closes over the
+  values — but `http_method` / `url_path` are invisible to `get_definition`, and therefore to the
+  MCP `_meta` projection.
+
+### Tests
+
+- `tests/test_openapi_backend_conformance.py` drives the new shared fixture
+  `openapi_backend.json` (9 module cases + 3 spec-resolution cases + 4 error cases).
+- `tests/test_acl_conformance.py` drives `acl_config.json` at `contract_version` 1.2 (32 cases),
+  and understands the 1.2 additions `expected_error_substrings`, `expected_error_names_field` and
+  `must_not_contain`.
+- `test_rule_approval_required_on_deny_raises` is renamed and reversed: it asserted a raw
+  `ACLRuleError` escaping, which is the behaviour this release changes. Its docstring quotes the old
+  claim so the reversal is legible.
+
+
 ## [0.19.0] - 2026-09-01
 
 Aligns `apcore-mcp` with the `system.*` management-surface contract (aiperceivable/apcore-mcp#14, #15, #16 Phase A; aiperceivable/apcore-mcp-python#8) and bumps the required `apcore` floor to `0.28.0` and `apcore-toolkit` floor to `0.10.2`.

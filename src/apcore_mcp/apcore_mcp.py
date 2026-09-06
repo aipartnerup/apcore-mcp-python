@@ -152,6 +152,50 @@ def _compute_management_surfaces(registry: Any) -> dict[str, bool]:
     }
 
 
+def _warn_acl_rules_that_protect_nothing(executor: Any) -> None:
+    """Report ACL rules that load cleanly and can protect nothing (§6.2.1 tier 2).
+
+    apcore 0.29.0 closed the *shape* of a pattern array at every door, but that
+    does not exhaust the inert class: ``["$not", "*"]`` has legal arity, exactly
+    one operand, and matches nothing — the identical fail-open, reached through
+    a well-formed array. apcore reports these through ``ACL.validate_rules()``
+    as findings that load, change no decision, and are never rejected, because
+    the predicate cannot be closed without freezing the pattern language.
+
+    No bridge called ``validate_rules()`` before 0.20.0. It is called here
+    rather than at build time because it also reports ``conditions`` keys with
+    no registered handler, and handler registration legitimately happens after
+    discovery — so the finding set is only meaningful once the registry is
+    assembled.
+
+    Advisory only, on the same terms as the unprotected-control-surface check
+    beside it: a finding never fails startup, and an exception out of
+    ``validate_rules()`` is caught, logged and stepped over.
+    """
+    acl = getattr(executor, "acl", None) or getattr(executor, "_acl", None)
+    if acl is None:
+        return
+    validate = getattr(acl, "validate_rules", None)
+    if not callable(validate):
+        return
+    try:
+        findings = validate()
+    except Exception:
+        logger.debug("acl.validate_rules() raised; skipping never-matches check", exc_info=True)
+        return
+
+    for finding in findings or []:
+        rule_index = getattr(finding, "rule_index", None)
+        path = getattr(finding, "path", None)
+        reason = getattr(finding, "reason", None) or getattr(finding, "message", "")
+        logger.warning(
+            "mcp.acl.rules[%s] '%s': %s",
+            rule_index if rule_index is not None else "?",
+            path or "?",
+            reason,
+        )
+
+
 def _warn_if_unprotected_control_surface(executor: Any) -> None:
     """[aiperceivable/apcore-mcp#15(b)] Warn loudly when `system.control.*`
     modules are registered but no recognised gate protects them.
@@ -273,6 +317,43 @@ class APCoreMCP:
         mcp = APCoreMCP(registry)
         mcp = APCoreMCP(executor)
     """
+
+    @classmethod
+    def from_openapi(cls, spec: Any, **options: Any) -> "APCoreMCP":
+        """Build an ``APCoreMCP`` whose backend is an OpenAPI 3.0/3.1 document.
+
+        Convenience over ``openapi_backend(...)`` followed by the ordinary
+        constructor; it adds no behaviour beyond the registry it builds, so
+        ``serve()``, ``async_serve()`` and ``to_openai_tools()`` behave exactly
+        as they do for any other backend.
+
+        Options prefixed ``openapi_`` are routed to the backend builder; the
+        rest reach ``__init__``. Requires ``pip install 'apcore-mcp[openapi]'``.
+
+        Example::
+
+            mcp = APCoreMCP.from_openapi(
+                "https://api.example.com/openapi.json",
+                openapi_prefix="petstore",
+            )
+            mcp.serve()
+        """
+        from apcore_mcp.openapi_backend import openapi_backend
+
+        backend_keys = {
+            "base_url", "prefix", "include", "exclude", "include_deprecated",
+            "headers", "timeout", "auth_header_factory", "registry",
+            "has_other_backend_source", "project_root", "transform_operation",
+            "transform_module", "derive_module_id",
+        }
+        backend_options = {}
+        for key in list(options):
+            if key.startswith("openapi_") and key[len("openapi_"):] in backend_keys:
+                backend_options[key[len("openapi_"):]] = options.pop(key)
+            elif key in backend_keys:
+                backend_options[key] = options.pop(key)
+        registry = openapi_backend(spec, **backend_options)
+        return cls(registry, **options)
 
     def __init__(
         self,
@@ -599,6 +680,9 @@ class APCoreMCP:
         # approval handler all wired above) and before the transport starts
         # listening.
         _warn_if_unprotected_control_surface(self._executor)
+        # §6.2.1 tier 2: rules that loaded and can protect nothing. Same
+        # placement and the same advisory contract as the check above.
+        _warn_acl_rules_that_protect_nothing(self._executor)
 
         return server, router, tools, init_options, version
 

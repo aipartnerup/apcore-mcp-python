@@ -274,15 +274,30 @@ def test_rule_approval_invalid_value_raises():
         build_acl_from_config({"rules": [{"callers": ["*"], "targets": ["*"], "effect": "allow", "approval": "maybe"}]})
 
 
-def test_rule_approval_required_on_deny_raises():
+def test_rule_approval_required_on_deny_is_wrapped_with_the_rule_index():
     """`approval: required` + `effect: deny` is meaningless (spec §6.1.6) — apcore's own
-    ACLRule validation rejects it; the Config Bus builder does not duplicate that check."""
+    ACLRule validation rejects it, and the builder re-raises that refusal as its own error.
+
+    Reversal, 0.20.0 (FR-ACL-003). This test previously read "the Config Bus builder does not
+    duplicate that check" and asserted a raw ``ACLRuleError`` escaping. Not duplicating the
+    *check* is still right — the rule stays apcore's single source of truth — but letting the
+    *error* escape unwrapped was not: ``ACLRuleError`` extends ``ModuleError``, not
+    ``ValueError``, so this builder's documented "raises ValueError" contract was false for
+    every refusal originating in apcore, and apcore's message names the type (``ACLRule``)
+    rather than the rule, which is unusable in a multi-rule YAML block.
+    """
     from apcore.errors import ACLRuleError
 
-    with pytest.raises(ACLRuleError):
+    with pytest.raises(ValueError) as exc_info:
         build_acl_from_config(
             {"rules": [{"callers": ["*"], "targets": ["*"], "effect": "deny", "approval": "required"}]}
         )
+
+    assert "mcp.acl.rules[0]" in str(exc_info.value)
+    # apcore's own reason survives verbatim after the prefix...
+    assert "approval: required" in str(exc_info.value)
+    # ...and the original is chained rather than swallowed.
+    assert isinstance(exc_info.value.__cause__, ACLRuleError)
 
 
 # ---------------------------------------------------------------------------
