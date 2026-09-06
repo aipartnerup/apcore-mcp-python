@@ -131,7 +131,7 @@ logger = logging.getLogger(__name__)
 
 
 def serve(
-    registry_or_executor: object,
+    registry_or_executor: object | None = None,
     *,
     transport: str = "stdio",
     host: str = "127.0.0.1",
@@ -264,7 +264,7 @@ def serve(
 
 
 def async_serve(
-    registry_or_executor: object,
+    registry_or_executor: object | None = None,
     *,
     name: str = "apcore-mcp",
     version: str | None = None,
@@ -397,7 +397,7 @@ class _AsyncServeCtx:
 
 
 def to_openai_tools(
-    registry_or_executor: object,
+    registry_or_executor: object | None = None,
     *,
     embed_annotations: bool = False,
     strict: bool = False,

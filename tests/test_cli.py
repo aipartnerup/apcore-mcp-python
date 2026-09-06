@@ -580,3 +580,54 @@ class TestApprovalFlag:
 
             mock_serve.assert_called_once()
             assert mock_serve.call_args.kwargs["approval_handler"] is None
+
+
+# ===========================================================================
+# Test: Backend-source rule — mcp.openapi.spec on the Config Bus alone
+# ===========================================================================
+
+
+class _FakeMcpOpenapiConfig:
+    """Minimal ``apcore.Config`` stand-in exposing ``.get("mcp.openapi")``."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def get(self, key: str):
+        return self._value if key == "mcp.openapi" else None
+
+
+class TestBackendSourceConfigBusFallback:
+    """Neither --extensions-dir nor --from-openapi, but mcp.openapi is set.
+
+    PRD F-054 Acceptance Criterion 1: mcp.openapi.spec alone must start a
+    server. Before this fix, the CLI rejected this combination outright with
+    exit code 2, never reaching the Config-Bus-aware serve()/APCoreMCP path.
+    """
+
+    def test_config_bus_openapi_present_does_not_exit(self):
+        patches = _make_patches()
+        fake_cfg = _FakeMcpOpenapiConfig({"spec": "https://api.example.com/openapi.json"})
+        with (
+            patches["registry_patch"],
+            patches["serve_patch"] as mock_serve,
+            patch("apcore.Config") as mock_cfg_cls,
+        ):
+            mock_cfg_cls.load.return_value = fake_cfg
+            _run_main()  # no --extensions-dir, no --from-openapi
+
+        mock_serve.assert_called_once()
+        # None, not an empty stand-in Registry() — see __main__.py's comment:
+        # an empty Registry() would be mistaken for a second, explicit
+        # backend source and wrongly require mcp.openapi.prefix.
+        assert mock_serve.call_args.args[0] is None
+
+    def test_neither_flag_nor_config_bus_still_exits_2(self, capsys):
+        fake_cfg = _FakeMcpOpenapiConfig(None)
+        with patch("apcore.Config") as mock_cfg_cls:
+            mock_cfg_cls.load.return_value = fake_cfg
+            with pytest.raises(SystemExit) as exc_info:
+                _run_main()
+        assert exc_info.value.code == 2
+        captured = capsys.readouterr()
+        assert "backend source is required" in captured.err

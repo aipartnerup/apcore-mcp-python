@@ -6,6 +6,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.20.1] - 2026-09-06
+
+Bugfix release from a `/apcore-skills:sync` pass across all three bridges. 0.20.0's tests all passed
+and its features work as documented — this release closes gaps between what shipped and what the
+PRD/SRS actually promise, found by re-verifying documented claims against source directly rather than
+against the 0.20.0 session's own narrative. 1029 tests pass (was 1015).
+
+### Fixed
+
+- **`mcp.openapi.spec` set on the Config Bus alone now starts a server (PRD F-054 Acceptance
+  Criterion 1).** Before this release, `mcp.openapi` was registered as a Config Bus namespace default
+  — the key round-tripped — but nothing ever read it back. Only `--from-openapi` and explicit
+  `from_openapi()`/`openapi_backend()` calls worked, contradicting the PRD's explicit "`mcp.openapi.spec`
+  ... starts a server" and its Description listing the Config Bus as one of three routes.
+  `extensions_dir_or_backend` is now optional on `APCoreMCP.__init__`, `serve()`, `async_serve()`,
+  `to_openai_tools()`, and `MCPServer.__init__`; when omitted, the backend resolves from
+  `mcp.openapi` alone, raising `ValueError` when neither a backend nor `mcp.openapi.spec` is given.
+  When both an explicit backend and `mcp.openapi` are configured, the two are unioned (backend
+  first, OpenAPI layered on top) and `mcp.openapi.prefix` becomes required, exactly as the CLI's
+  own two-flag combination already required. New `build_openapi_backend_from_config` helper
+  (mirrors `acl_builder.build_acl_from_config`). The CLI's own backend-source check now also
+  accepts "neither flag, but `mcp.openapi` is configured" instead of exiting 2 before ever reaching
+  this path.
+
+- **§6.2.1 tier-2 ACL diagnostic (FR-ACL-004) read the wrong field names — it fired, but every
+  warning rendered as `mcp.acl.rules[0] '?': `.** `ACL.validate_rules()`'s real
+  `RuleValidationFinding` shape is `{rule_index, condition_path, condition_key, effect,
+  sync_resolvable, async_resolvable}` — verified directly against a live `ACL` instance. This
+  function read `path`/`reason`/`message`, none of which exist, so every `getattr(..., default)`
+  silently returned the default and the warning carried no actionable content. `serve()` calling
+  it every startup and it firing correctly on paper is not the same claim as it firing usefully;
+  the second was false. Now reads the real fields and constructs the explanatory sentence itself
+  (apcore hands back structured data only, no free-text reason).
+
+- **`mcp.openapi.acknowledge_unapproved_writes` was documented as the suppression for the
+  "nothing will ask for approval" warning (FR-OPENAPI-005) in the warning's own message text, but
+  nothing ever read it.** Setting it exactly as instructed had no effect. `openapi_backend` now
+  accepts `acknowledge_unapproved_writes: bool = False` and skips the warning when true;
+  `build_openapi_backend_from_config` reads it from the Config Bus mapping.
+
+### Tests
+
+- `tests/test_openapi_config_bus_wiring.py` (9 cases) — the Config-Bus-only backend, the
+  union-plus-prefix-required interaction, and `acknowledge_unapproved_writes` suppression.
+- `tests/test_cli.py` — 2 new cases for the relaxed backend-source rule.
+- `tests/test_acl_tier2_warning.py` (3 cases) — the corrected field names, pinned against a real
+  `apcore.ACL` instance; asserts the exact string `'?'` never appears, which is what the bug
+  produced.
+
+### Documentation
+
+- `docs/features/openapi-backend.md`'s `## Contract: openapi_backend` Returns section and
+  `docs/srs-apcore-mcp.md`'s FR-OPENAPI-001 both claimed registered-module `metadata` visibility
+  (`http_method`/`url_path`/`openapi.*` via `get_definition`) as universal. Measured directly: only
+  Rust's writer builds a full `ModuleDescriptor` and preserves it; Python's and TypeScript's writers
+  both call the 2-arg `register(id, module)` form and drop it — an upstream (apcore-toolkit)
+  inconsistency this bridge cannot fix, now stated as Rust-only in both documents and in
+  `conformance/fixtures/openapi_backend.json`'s notes, and corrected in this repo's own 0.20.0 entry
+  below (which had stated the gap as universal).
+- `docs/srs-apcore-mcp.md`'s FR-OPENAPI-002 `####` heading read "projects unchanged onto both
+  protocol surfaces", contradicting its own Description and Boundary Conditions, which document a
+  projection step that changes the ID. Corrected to "is projected, then reaches both protocol
+  surfaces unchanged".
+
 ## [0.20.0] - 2026-09-06
 
 Feature release: the **OpenAPI backend** — point the bridge at an OpenAPI 3.0/3.1 document and every
@@ -106,12 +170,16 @@ operation becomes an MCP tool, proxied over HTTP, with no apcore project on the 
   verified against.** They are documented as an end-to-end pair; that verification asserted
   byte-identical `ScannedModule` output across SDKs, which never exercised registrability. The
   projection above is this bridge's local repair; the fix belongs in apcore-toolkit.
-- **`ScannedModule.metadata` never reaches the registered descriptor.** The writer calls
-  `registry.register(mod.module_id, module_instance)` with no `metadata=`, even though apcore's
-  `register` accepts one, and apcore exposes no way to attach metadata afterwards
+- **`ScannedModule.metadata` never reaches the registered descriptor — in Python and TypeScript.**
+  This writer calls `registry.register(mod.module_id, module_instance)` with no `metadata=`, even
+  though apcore's `register` accepts one, and apcore exposes no way to attach metadata afterwards
   (`get_module_metadata` reads; nothing writes). The proxy routes correctly — it closes over the
   values — but `http_method` / `url_path` are invisible to `get_definition`, and therefore to the
-  MCP `_meta` projection.
+  MCP `_meta` projection. **Not universal**: apcore-toolkit-rust's writer builds a full
+  `ModuleDescriptor` (required by apcore-rust's `Registry::register` signature) and copies
+  `metadata` into it, so the Rust bridge's registered modules *do* carry it. An earlier draft of
+  this note (and the shared fixture) stated the gap as language-independent; corrected after
+  verifying all three writers directly.
 
 ### Tests
 

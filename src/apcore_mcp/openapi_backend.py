@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "MODULE_ID_SEGMENT",
+    "build_openapi_backend_from_config",
     "openapi_backend",
     "project_module_id",
     "resolve_spec_location",
@@ -172,6 +173,7 @@ def openapi_backend(
     registry: Any | None = None,
     has_other_backend_source: bool = False,
     project_root: str | None = None,
+    acknowledge_unapproved_writes: bool = False,
     transform_operation: Callable[[str, str, dict[str, Any]], dict[str, Any] | None] | None = None,
     transform_module: Callable[[Any], Any | None] | None = None,
     derive_module_id: Callable[[str, str, dict[str, Any]], str | None] | None = None,
@@ -293,8 +295,70 @@ def openapi_backend(
                 result.verification_error,
             )
 
-    _warn_if_writes_have_no_approval_path(modules, target)
+    if not acknowledge_unapproved_writes:
+        _warn_if_writes_have_no_approval_path(modules, target)
     return target
+
+
+def build_openapi_backend_from_config(
+    openapi_config: Any | None,
+    *,
+    registry: Any | None = None,
+    has_other_backend_source: bool = False,
+) -> Any | None:
+    """Build a ``Registry`` from a Config Bus ``mcp.openapi`` mapping, or None.
+
+    Mirrors ``acl_builder.build_acl_from_config`` and
+    ``middleware_builder.build_middleware_from_config``: the raw ``mcp.openapi``
+    Config Bus value is a plain mapping (from ``apcore.yaml`` or
+    ``APCORE_MCP_OPENAPI_*`` env vars), not the keyword arguments
+    :func:`openapi_backend` takes directly, so this is the one place that
+    translates between them.
+
+    PRD F-054 documents ``mcp.openapi`` as reached from three routes — the
+    Config Bus, the CLI flags, and ``APCoreMCP.from_openapi`` — and PRD F-054
+    Acceptance Criterion 1 states plainly that ``mcp.openapi.spec`` alone,
+    with no CLI flag and no explicit code, "starts a server". Before this
+    function existed, ``mcp.openapi`` was registered as a Config Bus namespace
+    default (so the key round-tripped) but nothing ever read it back — the
+    Config Bus route was documented and silently absent in all three bridges.
+
+    ``auth_header_factory`` is deliberately not read from ``openapi_config``:
+    it is a callable, and a Config Bus value sourced from YAML/JSON/env can
+    never carry one. A caller needing per-request auth headers from a
+    Config-Bus-only setup has no route to supply it here — same limitation
+    ``build_acl_from_config`` has for anything callable-shaped.
+
+    Returns:
+        A ``Registry``, or None when no ``mcp.openapi`` section is configured.
+
+    Raises:
+        ValueError: When ``openapi_config`` is truthy but not a mapping, or is
+            a mapping with no ``spec`` key. Every other fault surfaces from
+            :func:`openapi_backend` itself.
+    """
+    if not openapi_config:
+        return None
+    if not isinstance(openapi_config, dict):
+        raise ValueError(f"mcp.openapi must be a mapping, got {type(openapi_config).__name__}")
+
+    spec = openapi_config.get("spec")
+    if not spec:
+        raise ValueError("mcp.openapi.spec is required when mcp.openapi is configured")
+
+    return openapi_backend(
+        spec,
+        base_url=openapi_config.get("base_url"),
+        prefix=openapi_config.get("prefix"),
+        include=openapi_config.get("include"),
+        exclude=openapi_config.get("exclude"),
+        include_deprecated=openapi_config.get("include_deprecated", True),
+        headers=openapi_config.get("headers"),
+        timeout=openapi_config.get("timeout", 30.0),
+        registry=registry,
+        has_other_backend_source=has_other_backend_source,
+        acknowledge_unapproved_writes=openapi_config.get("acknowledge_unapproved_writes", False),
+    )
 
 
 def _registry_ids(registry: Any) -> list[str]:

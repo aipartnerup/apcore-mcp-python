@@ -171,6 +171,14 @@ def _warn_acl_rules_that_protect_nothing(executor: Any) -> None:
     Advisory only, on the same terms as the unprotected-control-surface check
     beside it: a finding never fails startup, and an exception out of
     ``validate_rules()`` is caught, logged and stepped over.
+
+    Field names are ``RuleValidationFinding``'s real ones — verified against a
+    live ``apcore.ACL`` instance, not assumed: ``rule_index``,
+    ``condition_path``, ``condition_key``, ``effect``, ``sync_resolvable``,
+    ``async_resolvable``. There is no ``path``/``reason``/``message`` field;
+    an earlier version of this function read those names, which do not exist
+    on the real object, so every finding rendered as ``'?': `` with no
+    ``getattr`` default masking the empty result.
     """
     acl = getattr(executor, "acl", None) or getattr(executor, "_acl", None)
     if acl is None:
@@ -186,12 +194,20 @@ def _warn_acl_rules_that_protect_nothing(executor: Any) -> None:
 
     for finding in findings or []:
         rule_index = getattr(finding, "rule_index", None)
-        path = getattr(finding, "path", None)
-        reason = getattr(finding, "reason", None) or getattr(finding, "message", "")
+        condition_path = getattr(finding, "condition_path", None)
+        condition_key = getattr(finding, "condition_key", None)
+        effect = getattr(finding, "effect", None)
+        key_suffix = f" ({condition_key})" if condition_key else ""
+        reason = (
+            f"this pattern is well-formed but matches no legal module ID, so the "
+            f"'{effect}' rule protects nothing. It still loads and still changes no "
+            f"decision (PROTOCOL_SPEC §6.1.3) — rewrite the pattern or remove the rule."
+        )
         logger.warning(
-            "mcp.acl.rules[%s] '%s': %s",
+            "mcp.acl.rules[%s] '%s'%s: %s",
             rule_index if rule_index is not None else "?",
-            path or "?",
+            condition_path or "?",
+            key_suffix,
             reason,
         )
 
@@ -357,7 +373,7 @@ class APCoreMCP:
 
     def __init__(
         self,
-        extensions_dir_or_backend: str | Path | object,
+        extensions_dir_or_backend: str | Path | object | None = None,
         *,
         name: str = "apcore-mcp",
         version: str | None = None,
@@ -390,7 +406,17 @@ class APCoreMCP:
 
         Args:
             extensions_dir_or_backend: Path to an apcore extensions directory
-                (str or Path), or an existing Registry or Executor instance.
+                (str or Path), an existing Registry or Executor instance, or
+                None. When None, the backend is resolved from the Config Bus
+                ``mcp.openapi`` section alone (PRD F-054 Acceptance Criterion
+                1) — omitting this argument is therefore only valid when
+                ``mcp.openapi.spec`` is configured; otherwise construction
+                raises ValueError. When both this argument and
+                ``mcp.openapi`` are given, the two backends are unioned
+                (extensions/registry first, OpenAPI operations layered on
+                top), and ``mcp.openapi.prefix`` becomes required so the two
+                ID spaces cannot collide — see ``openapi_backend``'s
+                collision preflight.
             name: MCP server name (max 255 chars).
             version: MCP server version. Defaults to apcore-mcp package version.
             tags: Filter modules by tags. Only modules with ALL specified tags
@@ -441,14 +467,54 @@ class APCoreMCP:
 
             approval_handler = StorageBackedApprovalHandler(approval_store, notify_callback=approval_notify)
 
+        # Resolve mcp.openapi from the Config Bus early — before the base
+        # backend is built — because an omitted extensions_dir_or_backend
+        # depends entirely on it, and a supplied one needs the resulting
+        # registry mutated in place. PRD F-054 Acceptance Criterion 1:
+        # "mcp.openapi.spec ... starts a server" with no CLI flag and no
+        # explicit from_openapi()/openapi_backend() call required.
+        openapi_config: Any | None = None
+        try:
+            from apcore import Config
+
+            _config = Config.load()
+            if _config:
+                openapi_config = _config.get("mcp.openapi")
+        except ImportError:
+            pass
+
         # Resolve backend: str/Path → Registry with discover(), otherwise pass through
-        if isinstance(extensions_dir_or_backend, str | Path):
+        if extensions_dir_or_backend is None:
+            if not openapi_config:
+                raise ValueError(
+                    "extensions_dir_or_backend is required unless mcp.openapi.spec is "
+                    "configured on the Config Bus (PRD F-054). Pass a path, a "
+                    "Registry/Executor, or set mcp.openapi.spec."
+                )
+            from apcore_mcp.openapi_backend import build_openapi_backend_from_config
+
+            backend: Any = build_openapi_backend_from_config(openapi_config)
+        elif isinstance(extensions_dir_or_backend, str | Path):
             from apcore import Registry
 
-            backend: object = Registry(extensions_dir=str(extensions_dir_or_backend))
-            backend.discover()  # type: ignore[union-attr]
+            backend = Registry(extensions_dir=str(extensions_dir_or_backend))
+            backend.discover()
+            if openapi_config:
+                from apcore_mcp.openapi_backend import build_openapi_backend_from_config
+
+                build_openapi_backend_from_config(
+                    openapi_config, registry=backend, has_other_backend_source=True
+                )
         else:
             backend = extensions_dir_or_backend
+            if openapi_config:
+                from apcore_mcp.openapi_backend import build_openapi_backend_from_config
+
+                build_openapi_backend_from_config(
+                    openapi_config,
+                    registry=resolve_registry(backend),
+                    has_other_backend_source=True,
+                )
 
         self._registry = resolve_registry(backend)
 

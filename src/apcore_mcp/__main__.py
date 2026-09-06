@@ -218,13 +218,28 @@ def main() -> None:
     _validate_port(args.port, parser)
 
     # Backend-source rule: at least one, both allowed, both requires a prefix.
+    # A third route — mcp.openapi.spec configured on the Config Bus alone,
+    # with neither CLI flag — also counts (PRD F-054 Acceptance Criterion 1).
+    # `serve()` -> `APCoreMCP.__init__` picks it up automatically once a
+    # (possibly empty) Registry reaches it, so the CLI's own job here is only
+    # to not reject that case before it gets there.
     extensions_dir: Path | None = args.extensions_dir
     if extensions_dir is None and not args.from_openapi:
-        print(
-            "Error: a backend source is required — pass --extensions-dir, --from-openapi, or both.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
+        has_config_bus_openapi = False
+        try:
+            from apcore import Config
+
+            _config = Config.load()
+            has_config_bus_openapi = bool(_config and _config.get("mcp.openapi"))
+        except ImportError:
+            pass
+        if not has_config_bus_openapi:
+            print(
+                "Error: a backend source is required — pass --extensions-dir, --from-openapi, "
+                "set mcp.openapi.spec on the Config Bus, or combine them.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
     if extensions_dir is not None and args.from_openapi and not args.openapi_prefix:
         print(
             "Error: --openapi-prefix is required when --extensions-dir and --from-openapi are "
@@ -271,8 +286,16 @@ def main() -> None:
             logger.warning("No modules discovered in '%s'.", extensions_dir)
         else:
             logger.info("Discovered %d module(s) in '%s'.", num_modules, extensions_dir)
-    else:
+    elif args.from_openapi:
         registry = Registry()
+    else:
+        # Neither CLI flag given — the backend-source check above already
+        # confirmed mcp.openapi.spec is configured on the Config Bus. Pass
+        # None through so serve() -> APCoreMCP.__init__ resolves the backend
+        # from mcp.openapi alone, rather than handing it an empty stand-in
+        # Registry() that would be mistaken for a second, explicit backend
+        # source and wrongly require mcp.openapi.prefix.
+        registry = None
 
     if args.from_openapi:
         from apcore_mcp.openapi_backend import openapi_backend

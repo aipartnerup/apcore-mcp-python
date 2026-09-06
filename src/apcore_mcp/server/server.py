@@ -42,7 +42,7 @@ class MCPServer:
 
     def __init__(
         self,
-        registry_or_executor: object,
+        registry_or_executor: object | None = None,
         *,
         transport: str = "stdio",
         host: str = "127.0.0.1",
