@@ -198,10 +198,9 @@ def openapi_backend(
     if resolved is None:
         raise ValueError("mcp.openapi.spec is required and resolved to nothing.")
 
-    if isinstance(resolved, dict):
-        document = resolved
-    else:
-        document = toolkit.load_spec(resolved, headers=headers, timeout=timeout)
+    document = (
+        resolved if isinstance(resolved, dict) else toolkit.load_spec(resolved, headers=headers, timeout=timeout)
+    )
 
     # --- 2. Scan ------------------------------------------------------------
     skipped: list[tuple[str, str]] = []
@@ -222,8 +221,9 @@ def openapi_backend(
                 return None
         projected = project_module_id(module.module_id)
         if projected is None:
+            segments = module.module_id.lower().replace("-", "_").split(".")
             bad = next(
-                (seg for seg in module.module_id.lower().replace("-", "_").split(".") if not MODULE_ID_SEGMENT.match(seg)),
+                (seg for seg in segments if not MODULE_ID_SEGMENT.match(seg)),
                 module.module_id,
             )
             skipped.append((module.module_id, bad))

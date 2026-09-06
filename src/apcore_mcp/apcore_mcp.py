@@ -335,7 +335,7 @@ class APCoreMCP:
     """
 
     @classmethod
-    def from_openapi(cls, spec: Any, **options: Any) -> "APCoreMCP":
+    def from_openapi(cls, spec: Any, **options: Any) -> APCoreMCP:
         """Build an ``APCoreMCP`` whose backend is an OpenAPI 3.0/3.1 document.
 
         Convenience over ``openapi_backend(...)`` followed by the ordinary
