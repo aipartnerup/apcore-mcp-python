@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] - 2026-09-07
+
+No behaviour change. Released in step with `apcore-mcp-rust` 0.21.0 and
+`apcore-mcp-typescript` 0.21.0, which fix three classes of OpenAPI-backend defect — filed as four
+issues — that this package never had; Python is the reference implementation for each. Version
+parity across the three bridges is kept so a deployment can pin one number.
+1037 tests pass (was 1029).
+
+### Added
+
+- `tests/test_openapi_option_plumbing.py` (8 tests) — pins the OpenAPI backend's option plumbing:
+  `headers` and `timeout` reaching the spec fetch, `timeout` being seconds and spec-fetch-only
+  (proxied calls stay on apcore-toolkit's 60 s default), and `Config.project_root` being consulted
+  for a relative `spec`. No behaviour changed here — Python is the reference implementation for all
+  three, and the Rust and TypeScript bridges were fixed against it
+  ([apcore-mcp-rust#8](https://github.com/aiperceivable/apcore-mcp-rust/issues/8),
+  [#9](https://github.com/aiperceivable/apcore-mcp-rust/issues/9),
+  [apcore-mcp-typescript#10](https://github.com/aiperceivable/apcore-mcp-typescript/issues/10),
+  [apcore-mcp#19](https://github.com/aiperceivable/apcore-mcp/issues/19)). These tests exist so it
+  cannot drift into the same shape: the conformance suite hands the backend an already-parsed
+  document and calls `resolve_spec_location` directly with an explicit `project_root`, covering the
+  pure functions and never the wiring between them. Confirmed to fail when each defect is injected.
+
+
 ## [0.20.0] - 2026-09-06 
 
 Bugfix release from a `/apcore-skills:sync` pass across all three bridges. 0.20.0's tests all passed
